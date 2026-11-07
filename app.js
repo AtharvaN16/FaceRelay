@@ -535,6 +535,7 @@
     $app.dataset.screen = S.screen;
     $app.innerHTML = S.screen === "setup" ? viewSetup() : S.screen === "loading" ? viewLoading() : viewGame();
     if (S.screen === "setup") bindSetup();
+    else document.getElementById("remote-dlg")?.open && document.getElementById("remote-dlg").close();   // game started: dismiss the QR dialog
     saveGame();
     broadcast();
   }
