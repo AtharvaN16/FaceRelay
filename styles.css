@@ -520,3 +520,42 @@ body.tv .keys .score, body.tv .keys .prog { font-size: clamp(15px, 1.9vmin, 24px
 .r-conn { margin: 12px 0 0; font-size: 14px; color: var(--mute); }
 .r-conn.on { color: var(--good); }
 .r-actions { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
+
+.r-main .big.start { background: var(--start); color: #1a0b00; }
+.r-loading { margin: auto 0; display: grid; gap: 14px; justify-items: center; }
+
+/* phone: countdown centred in the free space */
+.remote .r-timer { flex: 1; display: flex; align-items: center; justify-content: center; font-size: 88px; }
+.remote .r-timer + .r-main { margin-top: 0; }
+/* phone: menu rows with tabs */
+.r-setup { display: grid; gap: 6px; }
+.r-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: var(--r-md); background: var(--surface); }
+.r-row.r-col { flex-direction: column; align-items: stretch; }
+.r-label { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 14px; font-weight: 500; white-space: nowrap; }
+.r-tabs { flex-wrap: nowrap; }
+.r-tabs button { padding: 7px 11px; font-size: 13px; }
+.r-step { display: inline-flex; align-items: center; gap: 4px; background: var(--surface-2); border-radius: 999px; padding: 3px; }
+.r-step button { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--chip); font-size: 17px; font-weight: 500; }
+.r-step button:disabled { opacity: 0.3; }
+.r-step b { min-width: 2em; text-align: center; font-weight: 500; }
+.r-decks { display: flex; flex-wrap: wrap; gap: 6px; }
+.r-decks .deck { padding: 7px 12px; font-size: 13px; }
+/* phone: the TV's bottom-row controls */
+.r-bottom { display: flex; justify-content: center; gap: 6px; padding-top: 12px; border-top: 1px solid var(--line); }
+.r-bottom .ghost { font-size: 13px; padding: 0.55em 0.95em; }
+
+/* ---------- phone remote, Figma redesign ---------- */
+.r-top { display: flex; justify-content: center; gap: 8px; margin-bottom: 8px; }
+.r-icon { width: 46px; height: 46px; border-radius: 50%; border: 0; background: var(--chip); color: var(--ink-2); display: grid; place-items: center; }
+.r-icon .ic { width: 18px; height: 18px; }
+.r-icon:active { background: var(--chip-hover); }
+.r-card { display: flex; flex-direction: column; align-items: center; gap: 22px; padding: 40px 20px 36px; border-radius: 22px; background: var(--surface); }
+.r-card.next { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.r-card img { width: 170px; height: 170px; object-fit: cover; border-radius: 30px; background: var(--surface-2); }
+.r-card b { font-size: 24px; font-weight: 500; letter-spacing: -0.02em; text-align: center; line-height: 1.15; }
+.remote .r-timer { font-size: 72px; }
+.r-pair { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.ghost.wide { justify-content: center; min-height: 54px; font-size: 16px; }
+.r-undo { display: flex; justify-content: center; margin-bottom: 6px; }
+.r-undo .ghost { font-size: 15px; padding: 0.65em 1.2em; }
+.r-main { gap: 10px; }
