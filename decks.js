@@ -94,3 +94,30 @@ window.DECKS = {
     ]
   }
 };
+
+// "Famous only": the best-known names in each deck (must also be in that deck's people list)
+(() => {
+  const FAMOUS = {
+    bollywood: ["Shah Rukh Khan", "Amitabh Bachchan", "Salman Khan", "Aamir Khan", "Deepika Padukone", "Priyanka Chopra", "Alia Bhatt",
+      "Ranbir Kapoor", "Ranveer Singh", "Katrina Kaif", "Hrithik Roshan", "Akshay Kumar", "Kareena Kapoor", "Aishwarya Rai Bachchan",
+      "Madhuri Dixit", "Ajay Devgn", "Kajol", "Rajinikanth", "Prabhas", "Allu Arjun"],
+    hollywood: ["Leonardo DiCaprio", "Tom Cruise", "Brad Pitt", "Angelina Jolie", "Scarlett Johansson", "Robert Downey Jr.", "Chris Hemsworth",
+      "Dwayne Johnson", "Will Smith", "Keanu Reeves", "Zendaya", "Tom Holland", "Morgan Freeman", "Johnny Depp", "Emma Watson",
+      "Ryan Reynolds", "Tom Hanks", "Jackie Chan"],
+    music: ["Taylor Swift", "Beyoncé", "Ed Sheeran", "Rihanna", "Justin Bieber", "Billie Eilish", "Ariana Grande", "Lady Gaga", "Shakira",
+      "Eminem", "Michael Jackson", "Freddie Mercury", "Elvis Presley", "Arijit Singh", "A. R. Rahman", "Lata Mangeshkar", "Diljit Dosanjh",
+      "Kishore Kumar"],
+    sports: ["Lionel Messi", "Cristiano Ronaldo", "Neymar", "Kylian Mbappé", "Roger Federer", "Rafael Nadal", "Novak Djokovic",
+      "Serena Williams", "Usain Bolt", "Michael Jordan", "LeBron James", "Lewis Hamilton", "Muhammad Ali", "Mike Tyson", "Tiger Woods",
+      "David Beckham", "Sachin Tendulkar", "Virat Kohli", "MS Dhoni", "Neeraj Chopra"],
+    tech: ["Elon Musk", "Mark Zuckerberg", "Bill Gates", "Steve Jobs", "Jeff Bezos", "Sundar Pichai", "Satya Nadella", "Tim Cook",
+      "Warren Buffett", "Ratan Tata", "Mukesh Ambani", "Oprah Winfrey", "Sam Altman", "Jack Ma"],
+    history: ["Albert Einstein", "Isaac Newton", "Marie Curie", "Stephen Hawking", "Leonardo da Vinci", "William Shakespeare", "J. K. Rowling",
+      "Mahatma Gandhi", "Nelson Mandela", "Martin Luther King Jr.", "Abraham Lincoln", "A. P. J. Abdul Kalam", "Mother Teresa",
+      "Barack Obama", "Elizabeth II", "Narendra Modi", "Charles Darwin", "Rabindranath Tagore"],
+  };
+  for (const [k, list] of Object.entries(FAMOUS)) {
+    const deck = window.DECKS[k]; if (!deck) continue;
+    deck.famous = list.filter((n) => deck.people.includes(n));
+  }
+})();

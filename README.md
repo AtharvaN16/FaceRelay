@@ -14,11 +14,11 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Put it on the TV
 - **Chrome:** ⋮ → *Cast…* → *Cast tab*, then press **F** for fullscreen.
 - **Mac:** AirPlay / Screen Mirroring, or HDMI.
-- **Remote:** press **Remote** in the menu and scan the QR code with your phone. The phone shows the answer and only the buttons you need right now (Show face, Correct / Wrong, Skip, Pause, Next, Undo). It connects straight to the game's browser (WebRTC via the free PeerJS server), so there's no backend. Phones can't open `localhost`, so use the live site.
+- **Remote:** press **Remote** in the menu and scan the QR code with your phone. The phone shows the answer and only the buttons you need right now (Next, Skip, Pause, Undo). It connects straight to the game's browser (WebRTC via the free PeerJS server), so there's no backend. Phones can't open `localhost`, so use the live site.
 
 ## Setup
 - **Teams:** 1–6 teams. Click a team's colour square to change its colour. Use − / + on a team to set its players (1–8).
-- **Faces:** pick decks (Bollywood & Indian Cinema, Hollywood, Music, Sports Stars, Tech & Business, Scientists, Writers & History; about 260 people). **+ Add** takes extra names (looked up on Wikipedia) or photos; the file name is the answer.
+- **Personalities:** pick decks (Bollywood & Indian Cinema, Hollywood, Music, Sports Stars, Tech & Business, Scientists, Writers & History; about 260 people). **+ Add** takes extra names (looked up on Wikipedia) or photos; the file name is the answer.
 - **Time:** 2, 3, 5 or 8 seconds per face.
 
 ## Modes
@@ -33,7 +33,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Keys
 | Key | Action |
 | --- | --- |
-| `Space` | Show face / correct / next |
+| `Space` | Next |
 | `←` | Wrong |
 | `1`–`6` / `0` | Award a team / nobody (Shout-Out) |
 | `P` | Pause (hides the face, freezes the clock) |

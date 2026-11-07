@@ -48,6 +48,9 @@
     chances: 1,   // relay: tries each player gets before the chain breaks
     rounds: 20,   // shout-out: number of faces
     customNames: "",
+    famousOnly: false,   // only the best-known people in each deck
+    negScoring: false,   // a wrong answer costs a point and play carries on
+    skips: -1,           // skips per turn (relay) / per game (shout); -1 = unlimited
     muted: false,
     tvMode: false,  // higher-contrast look for TVs
   };
@@ -56,8 +59,8 @@
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; } catch { return { ...defaults }; }
   }
   function saveSettings() {
-    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode } = S;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode })); } catch {}
+    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips } = S;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips })); } catch {}
   }
 
   // ---------- sound ----------
@@ -174,6 +177,9 @@
   const GAME_KEY = "face-relay:game:v1";
   // Saved settings from older versions: cricket merged into sports; drop decks that no longer exist
   S.decks = [...new Set((S.decks || []).map((d) => (d === "cricket" ? "sports" : d)))].filter((d) => window.DECKS[d]);
+  S.addOpen = !!(S.customNames || "").trim();
+  // Famous only is exclusive with the decks (older saves could have both)
+  if (S.famousOnly && S.decks.length) { S.decksBeforeFamous = S.decks; S.decks = []; }
   S.teamCount = clamp(+S.teamCount || 2, 1, MAX_TEAMS);
   if (!Array.isArray(S.teamSizes)) S.teamSizes = [];
   if (!Array.isArray(S.teamColors)) S.teamColors = [];
@@ -207,6 +213,18 @@
     const base = Array.from({ length: len }, (_, i) => i % size);
     return S.laps === 2 ? base.concat(base.slice().reverse()) : base;
   }
+  // "Famous only" is its own pill: the best-known names from every category. It's exclusive with the other decks.
+  const famousCount = () => new Set(Object.values(window.DECKS).flatMap((d) => d.famous || [])).size;
+  function chooseDeck(k) {
+    if (k === "famous") {
+      if (S.famousOnly) { S.famousOnly = false; S.decks = S.decksBeforeFamous?.length ? S.decksBeforeFamous : []; }
+      else { S.decksBeforeFamous = S.decks.slice(); S.famousOnly = true; S.decks = []; }
+      return;
+    }
+    if (!window.DECKS[k]) return;
+    if (S.famousOnly) { S.famousOnly = false; S.decks = [k]; return; }
+    S.decks = S.decks.includes(k) ? S.decks.filter((x) => x !== k) : S.decks.concat(k);
+  }
   const playerLabel = (i) => `Player ${i + 1}`;
 
   function nextCard() {
@@ -238,8 +256,9 @@
 
     try {
       const titles = new Set();
-      S.decks.forEach((d) => window.DECKS[d]?.people.forEach((t) => titles.add(t)));
-      const custom = S.customNames.split("\n").map((s) => s.trim()).filter(Boolean);
+      if (S.famousOnly) Object.values(window.DECKS).forEach((d) => (d.famous || []).forEach((t) => titles.add(t)));
+      else S.decks.forEach((d) => window.DECKS[d]?.people.forEach((t) => titles.add(t)));
+      const custom = S.famousOnly ? [] : S.customNames.split("\n").map((s) => s.trim()).filter(Boolean);
       if (custom.length) {
         render();
         const found = await Promise.all(custom.map((n) => searchTitle(n).catch(() => null)));
@@ -250,7 +269,7 @@
         render();
         cards = await fetchPeople([...titles]);
       }
-      cards = cards.concat(S.photos.map((p) => ({ key: "own:" + p.name, name: p.name, desc: "", img: p.img })));
+      if (!S.famousOnly) cards = cards.concat(S.photos.map((p) => ({ key: "own:" + p.name, name: p.name, desc: "", img: p.img })));
       if (!cards.length) throw new Error("Pick at least one deck.");
 
       cards = orderBySeen(cards);
@@ -269,7 +288,7 @@
 
     S.scores = Array(S.teamCount).fill(0);
     S.clears = Array(S.teamCount).fill(0);
-    S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
+    S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
     S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false;
     S.screen = "ready"; render();
   }
@@ -283,6 +302,12 @@
     S.screen = "show"; sfx.go(); render();
   }
 
+  // Start of a team's turn (relay) or of the game (shout: skips are per game)
+  const pointsLabel = (n) => `${n < 0 ? "−" + Math.abs(n) : n} point${Math.abs(n) === 1 ? "" : "s"}`;
+  function newTurn(relayOnly = false) {
+    if (relayOnly && S.mode !== "relay") return;
+    S.turnMisses = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
+  }
   const timeLeft = () => Math.max(0, S.paused ? S.pauseLeft : (S.deadline - performance.now()) / 1000);
 
   // ---- Undo: remember the game right before every call (correct / wrong / timeout / award)
@@ -290,6 +315,7 @@
     S.undoStack.push({
       scores: S.scores.slice(), clears: S.clears.slice(), team: S.team, turnNo: S.turnNo, link: S.link,
       run: S.run, misses: S.misses, round: S.round, card: S.card, left: timeLeft(),
+      turnMisses: S.turnMisses, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
     });
     if (S.undoStack.length > 30) S.undoStack.shift();
   }
@@ -299,7 +325,7 @@
     if (!u) return toast("Nothing to undo");
     document.getElementById("confetti").innerHTML = "";
     Object.assign(S, { scores: u.scores, clears: u.clears, team: u.team, turnNo: u.turnNo, link: u.link,
-      run: u.run, misses: u.misses, round: u.round, card: u.card });
+      run: u.run, misses: u.misses, round: u.round, card: u.card, turnMisses: u.turnMisses, marks: u.marks, skipsLeft: u.skipsLeft });
     // Back on the same face with the clock frozen, ready to be judged again
     S.result = null; S.awarded = null; S.cleared = false;
     S.screen = "show"; S.paused = true; S.pauseLeft = u.left; S.undone = true;
@@ -318,6 +344,8 @@
   const SKIP_DELAY_MS = 500;
   function skip() {
     if (S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
+    if (!(S.skipsLeft > 0)) return toast("No skips left");
+    S.skipsLeft--;
     S.paused = false; S.undone = false;
     S.skipping = true; S.skipAt = performance.now() + SKIP_DELAY_MS;
     render();
@@ -338,7 +366,7 @@
     stopClock(); snapshot(); S.paused = false; S.undone = false;
     S.result = correct ? "correct" : "wrong";
     if (correct) { S.scores[S.team]++; S.run++; sfx.correct(); }
-    else { S.misses++; sfx.wrong(); }
+    else { S.misses++; S.turnMisses++; if (S.negScoring) S.scores[S.team]--; sfx.wrong(); }
     S.screen = "result";
     render();
   }
@@ -346,7 +374,7 @@
   function timeUp() {
     snapshot();
     if (S.mode === "relay") {
-      S.secondsLeft = 0; S.misses++; S.result = "timeout"; S.screen = "result"; sfx.wrong(); render();
+      S.secondsLeft = 0; S.misses++; S.turnMisses++; if (S.negScoring) S.scores[S.team]--; S.result = "timeout"; S.screen = "result"; sfx.wrong(); render();
     } else {
       S.awarded = -1; S.screen = "result"; sfx.wrong(); render();
     }
@@ -362,11 +390,19 @@
     if (S.screen === "result") {
       // Same team carries on: deal the next player's face straight away (the chain row shows who's up).
       // The "Player N" ready screen is only used at the start of each team's turn.
-      if (S.result === "correct" && S.link < chainOrder().length - 1) { S.link++; S.misses = 0; S.result = null; return go(); }
+      const last = S.link >= chainOrder().length - 1;
+      // Negative scoring: a miss costs a point but the chain carries on to the next player
+      if (S.negScoring && S.result !== "correct") {
+        S.marks[S.link] = "miss";
+        if (!last) { S.link++; S.misses = 0; S.result = null; return go(); }
+        S.cleared = false; S.screen = "turnEnd"; return render();
+      }
+      if (S.result === "correct") S.marks[S.link] = "ok";
+      if (S.result === "correct" && !last) { S.link++; S.misses = 0; S.result = null; return go(); }
       // Missed, but this player still has chances left: same player, new face
       if (S.result !== "correct" && S.misses < S.chances) { S.result = null; return go(); }
       // Turn over: either the whole chain cleared or someone missed
-      S.cleared = S.result === "correct";
+      S.cleared = S.result === "correct" && !(S.negScoring && S.turnMisses);
       if (S.cleared) { S.scores[S.team] += CHAIN_BONUS; S.clears[S.team]++; sfx.win(); confetti(); }
       S.screen = "turnEnd"; return render();
     }
@@ -374,7 +410,7 @@
       S.team++;
       if (S.team >= S.teamCount) { S.team = 0; S.turnNo++; }
       if (S.turnNo > S.turns) return finish();
-      S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
+      S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn(S.mode === "relay");
       S.screen = "ready"; return render();
     }
   }
@@ -388,6 +424,13 @@
     if (t >= 0 && t < S.teamCount) { S.scores[t]++; S.awarded = t; sfx.correct(); }
     else { S.awarded = -1; sfx.wrong(); }
     S.screen = "result"; render();
+  }
+
+  // Shout-Out with negative scoring: a team shouted a wrong name → −1, face stays up for the others
+  function penalize(t) {
+    if (S.mode !== "shout" || !S.negScoring || S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
+    if (!(t >= 0 && t < S.teamCount)) return;
+    snapshot(); S.scores[t]--; sfx.wrong(); render();
   }
 
   function primary() {
@@ -405,6 +448,41 @@
   }
 
   // Restart the current game with the same teams and settings (photos stay loaded)
+  // Keyboard shortcuts helper
+  const SHORTCUTS = [
+    ["During a game", [
+      [["Space"], "Next"],
+      [["←"], "Wrong answer"],
+      [["P"], "Pause / resume"],
+      [["S"], "Skip face"],
+      [["U"], "Undo the last call (on the result screen)"],
+      [["1", "–", "6"], "Shout-Out: award a team"],
+      [["⇧", "1", "–", "6"], "Shout-Out: −1 to a team (negative scoring)"],
+      [["0"], "Shout-Out: nobody got it"],
+    ]],
+    ["Anywhere", [
+      [["Enter"], "Start the game (in the menu)"],
+      [["R"], "Restart the game"],
+      [["M"], "Sound on / off"],
+      [["F"], "Fullscreen on / off"],
+      [["T"], "TV mode on / off"],
+      [["Esc"], "Back to the menu"],
+      [["?"], "Show these shortcuts"],
+    ]],
+  ];
+  function openShortcuts() {
+    document.querySelector("dialog.keys-dlg")?.remove();
+    const d = document.createElement("dialog");
+    d.className = "remote-dlg keys-dlg";
+    d.innerHTML = `<button class="r-close" type="button" aria-label="Close">${IC.close}</button>
+      <h2 class="r-title">Keyboard shortcuts</h2>
+      ${SHORTCUTS.map(([group, rows]) => `<section class="sc-group"><h3>${group}</h3>
+        ${rows.map(([keys, label]) => `<div class="sc-row"><span class="sc-keys">${keys.map((k) => (k === "–" ? `<i>–</i>` : `<kbd>${k}</kbd>`)).join("")}</span><span>${label}</span></div>`).join("")}</section>`).join("")}`;
+    d.addEventListener("click", (e) => { if (e.target === d || e.target.closest(".r-close")) d.close(); });
+    d.addEventListener("close", () => d.remove());
+    document.body.appendChild(d); d.showModal();
+  }
+
   // In-page confirm. The browser's built-in confirm dialog forces Chrome out of fullscreen.
   function ask(message, okLabel) {
     document.querySelector("dialog.confirm")?.remove();
@@ -425,7 +503,7 @@
     if (!confirmed && !(await ask("Restart the game?", "Restart"))) return;
     clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = "";
     S.scores = Array(S.teamCount).fill(0); S.clears = Array(S.teamCount).fill(0);
-    S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
+    S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
     S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false; S.skipping = false; S.screen = "ready"; render();
   }
 
@@ -433,7 +511,8 @@
 
   // ---------- save / resume (localStorage on this device) ----------
   const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
-    "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi"];
+    "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi",
+    "negScoring", "skips", "turnMisses", "marks", "skipsLeft"];
   function saveGame() {
     if (!["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
     const g = { savedAt: Date.now() };
@@ -458,7 +537,9 @@
     GAME_FIELDS.forEach((k) => { if (k in g) S[k] = g[k]; });
     S.queue = g.queue; S.qi = Math.min(g.qi || 0, S.queue.length - 1);
     if (!S.card && S.screen === "result") S.screen = "ready";
-    S.undoStack = []; S.paused = false; S.undone = false;
+    S.undoStack = []; S.paused = false; S.undone = false; S.skipping = false;
+    if (S.skipsLeft == null) S.skipsLeft = S.skips < 0 ? Infinity : S.skips;   // Infinity is saved as null
+    S.marks = S.marks || []; S.turnMisses = S.turnMisses || 0;
     saveSettings(); render();
   }
 
@@ -517,6 +598,8 @@
     soundOn: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
     soundOff: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 10l4 4M20 10l-4 4"/>'),
     restart: svg('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>'),
+    keyboard: svg('<rect x="2.5" y="6" width="19" height="12" rx="2"/><path d="M6.5 10h.01M10 10h.01M13.5 10h.01M17 10h.01M7.5 14h9"/>'),
+    collapse: svg('<path d="M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5"/>'),
     menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
     close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
@@ -553,7 +636,9 @@
 
   function viewSetup() {
     const relay = S.mode === "relay";
-    const deckChips = Object.entries(window.DECKS).map(([k, d]) => `
+    const addChip = S.famousOnly ? "" : `<button class="deck add-pill ${S.addOpen ? "open" : ""}" data-act="addToggle" type="button" aria-expanded="${!!S.addOpen}">${S.addOpen ? "−" : "+"} Add</button>`;
+    const famousChip = `<button class="deck ${S.famousOnly ? "on" : ""}" data-deck="famous" type="button"><span>Famous only</span><small>${famousCount()}</small></button>`;
+    const deckChips = famousChip + Object.entries(window.DECKS).map(([k, d]) => `
       <button class="deck ${S.decks.includes(k) ? "on" : ""}" data-deck="${k}" type="button">
         <span>${esc(d.label)}</span><small>${d.people.length}</small>
       </button>`).join("");
@@ -575,8 +660,9 @@
         <div class="logo"><span class="logo-mark" aria-hidden="true"><i></i><i></i></span><h1>Face Relay</h1></div>
         <div class="top-actions">
           ${remotePill()}
+          <button class="ghost" data-act="keys" type="button" title="Keyboard shortcuts (?)">${IC.keyboard} Shortcuts</button>
           <button class="ghost ${S.tvMode ? "active" : ""}" data-act="tv" type="button" aria-pressed="${!!S.tvMode}" title="Higher contrast for TVs (T)">${IC.tv} TV mode</button>
-          <button class="ghost" data-act="fs" type="button">${IC.expand} Fullscreen</button>
+          <button class="ghost ${document.fullscreenElement ? "fs-on" : ""}" data-act="fs" type="button">${document.fullscreenElement ? `${IC.collapse} Exit fullscreen` : `${IC.expand} Fullscreen`}</button>
         </div>
       </header>
       ${S.error ? `<div class="err">${esc(S.error)}</div>` : ""}
@@ -602,25 +688,24 @@
           <div class="tpreviews">${teamPreview}</div>
         </section>
         <section class="panel">
-          <h2>Faces</h2>
-          <div class="decks">${deckChips}</div>
-          <details class="custom" ${S.customNames.trim() || S.photos.length ? "open" : ""}>
-            <summary>Add</summary>
-            <div class="custom-body">
+          <h2>Personalities</h2>
+          <div class="decks">${deckChips}${addChip}</div>
+          ${!S.famousOnly && S.addOpen ? `<div class="custom-body">
             <label class="lbl">Names, one per line</label>
             <textarea id="customNames" rows="3" placeholder="Sunil Grover&#10;Kapil Sharma&#10;MrBeast">${esc(S.customNames)}</textarea>
             <label class="lbl">Photos (file name is the answer)</label>
             <input type="file" id="photos" accept="image/*" multiple />
             ${S.photos.length ? `<div class="thumbs">${S.photos.map((p, i) => `<figure><img src="${p.img}" alt=""><figcaption>${esc(p.name)}</figcaption><button class="x" data-delphoto="${i}" type="button">×</button></figure>`).join("")}</div>` : ""}
-            </div>
-          </details>
+          </div>` : ""}
           <div class="row">
             <div><h3>Time</h3>${segs("secs", [2, 3, 5, 8], S.seconds, (v) => v + "s")}</div>
             ${relay
               ? `<div><h3>Turns per team</h3>${segs("turns", [1, 2, 3, 5], S.turns)}</div>
-                 <div><h3>Chances per player</h3>${segs("chances", [1, 2, 3], S.chances)}</div>
+                 ${S.negScoring ? "" : `<div><h3>Chances per player</h3>${segs("chances", [1, 2, 3], S.chances)}</div>`}
                  <div><h3>Order</h3>${segs("laps", [1, 2], S.laps, (v) => (v === 1 ? "Once" : "Down & back"))}</div>`
-              : `<div><h3>Faces</h3>${segs("rounds", [10, 20, 30, 50], S.rounds)}</div>`}
+              : `<div><h3>Rounds</h3>${segs("rounds", [10, 20, 30, 50], S.rounds)}</div>`}
+            <div><h3>${relay ? "Skips per turn" : "Skips"}</h3>${segs("skips", [0, 1, 2, -1], S.skips, (v) => (v < 0 ? "Unlimited" : v))}</div>
+            <div><h3>Negative scoring</h3><button type="button" class="switch ${S.negScoring ? "on" : ""}" role="switch" aria-checked="${S.negScoring}" data-act="neg" aria-label="Negative scoring" title="A wrong answer costs a point and play carries on"><i></i></button></div>
           </div>
         </section>
       </div>
@@ -653,7 +738,10 @@
     const order = chainOrder();
     return `<div class="chain" style="--c:${teamColor(S.team)}">${order.map((pi, i) => {
       const out = S.result && S.result !== "correct" && S.misses >= S.chances;
-      const state = i < S.link || (i === S.link && S.result === "correct") ? "done" : i === S.link ? (out && S.screen !== "ready" ? "fail" : "now") : "";
+      const negMiss = S.negScoring && i === S.link && S.result && S.result !== "correct";
+      const state = i < S.link ? (S.marks?.[i] === "miss" ? "fail" : "done")
+        : i === S.link && S.result === "correct" ? "done"
+        : i === S.link ? ((out || negMiss) && S.screen !== "ready" ? "fail" : "now") : "";
       const pips = S.chances > 1 && i === S.link && state !== "done"
         ? `<span class="pips">${Array.from({ length: S.chances }, (_, k) => `<i class="${k < S.misses ? "used" : ""}"></i>`).join("")}</span>` : "";
       return `<div class="link ${state}"><span>P${pi + 1}</span>${pips}</div>`;
@@ -686,7 +774,7 @@
     const relay = S.mode === "relay";
     const tc = teamColor(S.team);
     let top = relay ? chain() : "";
-    const progress = relay ? `Turn <b>${Math.min(S.turnNo, S.turns)}</b>/${S.turns}` : `Face <b>${Math.max(S.round, 1)}</b>/${S.rounds}`;
+    const progress = relay ? `Turn <b>${Math.min(S.turnNo, S.turns)}</b>/${S.turns}` : `Round <b>${Math.max(S.round, 1)}</b>/${S.rounds}`;
     let stage = "", keys = "", bottom = "";
 
     switch (S.screen) {
@@ -708,7 +796,7 @@
         stage = `<div class="showwrap ${state}">${photo(false, "live")}
             ${S.skipping ? `<div class="state-chip" id="skipchip">Skipping</div>` : S.undone ? `<div class="state-chip">Undone · judge again</div>` : S.paused ? `<div class="state-chip">Paused</div>` : ""}</div>
           <div class="timer"><div class="track"><div id="timebar" style="transform:scaleX(${frac})" data-hot="${frac < 0.34 ? 1 : ""}"></div></div><div id="timenum">${Math.ceil(left)}</div></div>`;
-        keys = relay ? "" : `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}`;
+        keys = relay ? "" : `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}${S.negScoring ? ` ${keyHint(`⇧1–${S.teamCount}`, "−1")}` : ""}`;
         break;
       }
       case "result": {
@@ -725,7 +813,7 @@
         const lastTurn = S.team === S.teamCount - 1 && S.turnNo >= S.turns;
         const nextTeam = (S.team + 1) % S.teamCount;
         stage = `<div class="ready turnend" style="--c:${tc}">
-          <h2 class="who">${S.cleared ? "Chain cleared" : `${S.run} point${S.run === 1 ? "" : "s"}`}</h2>
+          <h2 class="who">${S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0))}</h2>
           ${!lastTurn && S.teamCount > 1 ? `<p class="sub next">Next: <b style="color:${teamColor(nextTeam)}">${teamName(nextTeam)}</b></p>` : ""}</div>`;
         break;
       }
@@ -750,11 +838,11 @@
       ${bottom}
       <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${phoneConns.size ? `<span class="kh live">${IC.remote} Phone connected</span>` : ""}
         ${S.screen === "show" && !S.undone && !S.skipping ? `<button class="txt-btn" data-act="pause" type="button" title="Pause (P)"><kbd>P</kbd>${S.paused ? "Resume" : "Pause"}</button>` : ""}
-        ${S.screen === "show" && !(S.paused && !S.undone) && !S.skipping ? `<button class="txt-btn" data-act="skip" type="button" title="Skip face (S)"><kbd>S</kbd>Skip</button>` : ""}
+        ${S.screen === "show" && !(S.paused && !S.undone) && !S.skipping && S.skipsLeft > 0 ? `<button class="txt-btn" data-act="skip" type="button" title="Skip face (S)"><kbd>S</kbd>Skip${Number.isFinite(S.skipsLeft) ? ` · ${S.skipsLeft}` : ""}</button>` : ""}
         ${S.undoStack.length && S.screen === "result" ? `<button class="txt-btn" data-act="undo" type="button" title="Undo last call (U)"><kbd>U</kbd>Undo</button>` : ""}
         <button class="ghost sm icon" data-act="restart" type="button" title="Restart (R)" aria-label="Restart">${IC.restart}</button>
         <button class="ghost sm icon" data-act="mute" type="button" title="Sound (M)" aria-label="${S.muted ? "Unmute" : "Mute"}">${S.muted ? IC.soundOff : IC.soundOn}</button>
-        <button class="ghost sm icon" data-act="fs" type="button" title="Fullscreen (F)" aria-label="Fullscreen">${IC.expand}</button>
+        <button class="ghost sm icon ${document.fullscreenElement ? "fs-on" : ""}" data-act="fs" type="button" title="${document.fullscreenElement ? "Exit fullscreen (F)" : "Fullscreen (F)"}" aria-label="${document.fullscreenElement ? "Exit fullscreen" : "Fullscreen"}">${document.fullscreenElement ? IC.collapse : IC.expand}</button>
         <button class="ghost sm" data-act="menu" type="button" title="Menu (Esc)">${IC.menu} Menu</button></footer>
     </main>`;
   }
@@ -779,7 +867,7 @@
     const t = e.target.closest("button");
     if (!t) return;
     const d = t.dataset;
-    if (d.deck) { S.decks = S.decks.includes(d.deck) ? S.decks.filter((x) => x !== d.deck) : S.decks.concat(d.deck); saveSettings(); return render(); }
+    if (d.deck) { chooseDeck(d.deck); saveSettings(); return render(); }
     if (d.mode) { S.mode = d.mode; if (S.mode === "shout" && S.seconds < 5) S.seconds = 5; if (S.mode === "relay" && S.seconds > 3) S.seconds = 3; saveSettings(); return render(); }
     if (d.step) {
       S.teamCount = clamp(S.teamCount + +d.d, 1, MAX_TEAMS); syncTeams(); saveSettings(); return render();
@@ -792,6 +880,7 @@
     if (d.secs) { S.seconds = +d.secs; saveSettings(); return render(); }
     if (d.laps) { S.laps = +d.laps; saveSettings(); return render(); }
     if (d.turns) { S.turns = +d.turns; saveSettings(); return render(); }
+    if (d.skips) { S.skips = +d.skips; saveSettings(); return render(); }
     if (d.chances) { S.chances = +d.chances; saveSettings(); return render(); }
     if (d.rounds) { S.rounds = +d.rounds; saveSettings(); return render(); }
     if (d.delphoto) { URL.revokeObjectURL(S.photos[+d.delphoto].img); S.photos.splice(+d.delphoto, 1); return render(); }
@@ -801,6 +890,9 @@
       case "primary": return primary();
       case "fs": return toggleFs();
       case "tv": S.tvMode = !S.tvMode; saveSettings(); return render();
+      case "keys": return openShortcuts();
+      case "addToggle": S.addOpen = !S.addOpen; render(); if (S.addOpen) document.getElementById("customNames")?.focus(); return;
+      case "neg": S.negScoring = !S.negScoring; saveSettings(); return render();
       case "restart": return restart();
       case "pause": return togglePause();
       case "skip": return skip();
@@ -831,11 +923,13 @@
     if (typing) return;
     const k = e.key;
     if (e.repeat) { if (k === " ") e.preventDefault(); return; }
+    if (k === "?") { e.preventDefault(); return openShortcuts(); }
     if (k === "Escape" && S.colorPick !== null) { S.colorPick = null; return render(); }
     if (k === " " || k === "Spacebar") { e.preventDefault(); return primary(); }
     if (k === "Enter" && S.screen === "setup") { e.preventDefault(); return startGame(); }
     if (k === "ArrowLeft" || k === "Backspace" || k === "x" || k === "X") { e.preventDefault(); return judge(false); }
     if ((k === "r" || k === "R") && S.screen !== "setup" && S.screen !== "loading") return restart();
+    if (e.shiftKey && /^Digit[1-9]$/.test(e.code) && S.mode === "shout") return penalize(+e.code.slice(5) - 1);
     if (/^[0-9]$/.test(k) && S.mode === "shout") return award(k === "0" ? -1 : +k - 1);
     if (k === "f" || k === "F") return toggleFs();
     if (k === "p" || k === "P") return togglePause();
@@ -913,8 +1007,10 @@
         if (S.mode === "shout" && S.seconds < 5) S.seconds = 5; if (S.mode === "relay" && S.seconds > 3) S.seconds = 3; break;
       case "teamCount": S.teamCount = clamp(n, 1, MAX_TEAMS); syncTeams(); break;
       case "teamSize": { const [t, d] = String(v).split(":").map(Number); if (S.teamSizes[t] != null) S.teamSizes[t] = clamp(S.teamSizes[t] + d, 1, MAX_PER_TEAM); break; }
-      case "deck": if (window.DECKS[v]) S.decks = S.decks.includes(v) ? S.decks.filter((x) => x !== v) : S.decks.concat(v); break;
+      case "deck": chooseDeck(v); break;
       case "secs": if ([2, 3, 5, 8].includes(n)) S.seconds = n; break;
+      case "neg": S.negScoring = v === "on"; break;
+      case "skips": if ([0, 1, 2, -1].includes(n)) S.skips = n; break;
       case "turns": if ([1, 2, 3, 5].includes(n)) S.turns = n; break;
       case "chances": if ([1, 2, 3].includes(n)) S.chances = n; break;
       case "laps": if ([1, 2].includes(n)) S.laps = n; break;
@@ -929,7 +1025,7 @@
     if (m.type === "hello") return broadcast();
     if (m.type !== "cmd") return;
     ({ primary, correct: () => judge(true), wrong: () => judge(false), award: () => award(m.arg),
-       pause: togglePause, skip, undo,
+       pause: togglePause, skip, undo, penalize: () => penalize(m.arg),
        set: () => applySetting(m.arg?.k, m.arg?.v),
        restartNow: () => restart(true),
        menuNow: () => { if (S.screen !== "setup" && S.screen !== "loading") toMenu(); },
@@ -952,7 +1048,7 @@
       const r = b.dataset.r;
       if (r === "close") d.close();
       if (r === "on" || r === "retry") { userTurnedOff = false; roomStatus = "off"; try { peer?.destroy(); } catch {} peer = null; startRoom(); }
-      if (r === "off") { userTurnedOff = true; stopRoom(); toast("Phone remote turned off"); }
+      if (r === "off") { userTurnedOff = true; stopRoom(); d.close(); toast("Phone remote turned off"); }
     });
     if (!d.open) d.showModal();
     // First open turns the phone remote on; after you turn it off, it stays off until you press "Turn on"
@@ -1008,11 +1104,11 @@
       team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null,
       player: cur ? `P${(chainOrder()[S.link] ?? 0) + 1}` : null,
       chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
-      round: !relay && S.screen !== "setup" ? `Face ${Math.max(S.round, 1)}/${S.rounds}` : null,
+      round: !relay && S.screen !== "setup" ? `Round ${Math.max(S.round, 1)}/${S.rounds}` : null,
       teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
       turnEnd: S.screen === "turnEnd" ? (() => {
         const nt = (S.team + 1) % S.teamCount, last = S.team === S.teamCount - 1 && S.turnNo >= S.turns;
-        return { headline: S.cleared ? "Chain cleared" : `${S.run} point${S.run === 1 ? "" : "s"}`, color: teamColor(S.team),
+        return { headline: S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0)), color: teamColor(S.team),
           next: !last && S.teamCount > 1 ? { name: teamName(nt), color: teamColor(nt) } : null, last };
       })() : null,
       final: S.screen === "final" ? (() => {
@@ -1021,11 +1117,14 @@
         return { headline: S.teamCount === 1 ? `${ranked[0].score} points` : ranked[0].score === 0 ? "Nobody scored" : top.length > 1 ? "Tie" : `${ranked[0].name} wins`,
           color: top.length === 1 && S.teamCount > 1 && ranked[0].score > 0 ? ranked[0].color : null, ranked };
       })() : null,
+      skipsLeft: Number.isFinite(S.skipsLeft) ? S.skipsLeft : null, neg: !!S.negScoring,
       paused: S.paused, undone: S.undone, skipping: S.skipping, canUndo: S.undoStack.length > 0, muted: !!S.muted,
       settings: S.screen === "setup" ? {
         mode: S.mode, teamCount: S.teamCount, seconds: S.seconds, turns: S.turns, chances: S.chances, laps: S.laps, rounds: S.rounds,
         teams: Array.from({ length: S.teamCount }, (_, t) => ({ name: teamName(t), color: teamColor(t), size: S.teamSizes[t] })),
-        decks: Object.entries(window.DECKS).map(([k, d]) => ({ k, label: d.label, n: d.people.length, on: S.decks.includes(k) })),
+        decks: [{ k: "famous", label: "Famous only", n: famousCount(), on: !!S.famousOnly }]
+          .concat(Object.entries(window.DECKS).map(([k, d]) => ({ k, label: d.label, n: d.people.length, on: !S.famousOnly && S.decks.includes(k) }))),
+        famous: S.famousOnly ? "famous" : "all", neg: !!S.negScoring, skips: S.skips,
       } : null,
       left: S.screen === "show" ? timeLeft() : 0,
     };
@@ -1045,14 +1144,17 @@
       const B = (cmd, label, cls = "", arg) => `<button class="big ${cls}" data-h="${cmd}" ${arg !== undefined ? `data-arg="${arg}"` : ""}>${label}</button>`;
       const G = (cmd, label, cls = "") => `<button class="ghost ${cls}" data-h="${cmd}">${label}</button>`;
       const undo = st.canUndo ? `<div class="r-undo">${G("undo", `${IC.undo} Undo`)}</div>` : "";
-      const skipPause = `<div class="r-pair">${G("skip", `${IC.skip} Skip`, "wide")}${G("pause", `${IC.pause} Pause`, "wide")}</div>`;
+      const canSkip = st.skipsLeft === null || st.skipsLeft > 0;
+      const skipPause = `<div class="r-pair ${canSkip ? "" : "one"}">${canSkip ? G("skip", `${IC.skip} Skip${st.skipsLeft !== null ? ` · ${st.skipsLeft}` : ""}`, "wide") : ""}${G("pause", `${IC.pause} Pause`, "wide")}</div>`;
       switch (st.screen) {
         case "ready": return { main: B("primary", "Next") };
         case "show":
           if (st.skipping) return { main: "" };
           if (st.paused && !st.undone) return { main: B("pause", "Resume") };
-          if (!relay) return { main: (st.undone ? "" : skipPause) + `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>` };
-          // "Next" = they got it. A wrong answer is the timeout (or Undo to re-judge)
+          if (!relay) return { main: (st.undone ? "" : skipPause) + (st.neg
+              ? `<div class="r-teams">${st.teams.map((t, i) => `<div class="r-team"><button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button><button class="ghost r-minus" data-h="penalize" data-arg="${i}" aria-label="${esc(t.name)} minus one">−1</button></div>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`
+              : `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`) };
+          // "Next" moves the game on (during a face it scores the answer). A wrong answer is ← / the timeout, or Undo to re-judge
           return { main: (st.undone ? "" : skipPause) + B("primary", "Next") };
         case "result": return { main: undo + B("primary", "Next") };
         case "turnEnd": return { main: B("primary", st.turnEnd?.last ? "See results" : "Next team") };
@@ -1074,13 +1176,15 @@
         ${row("Teams", tabs("teamCount", [1, 2, 3, 4, 5, 6].map((n) => [n, n]), cfg.teamCount))}
         ${relay ? cfg.teams.map((t, i) => row(`<i class="dot" style="--c:${t.color}"></i>${esc(t.name)}`,
           `<div class="r-step"><button type="button" data-h="set" data-k="teamSize" data-v="${i}:-1" ${t.size <= 1 ? "disabled" : ""}>−</button><b>${t.size}</b><button type="button" data-h="set" data-k="teamSize" data-v="${i}:1" ${t.size >= 8 ? "disabled" : ""}>+</button></div>`)).join("") : ""}
-        <div class="r-row r-col"><span class="r-label">Faces</span><div class="r-decks">${cfg.decks.map((d) =>
+        <div class="r-row r-col"><span class="r-label">Personalities</span><div class="r-decks">${cfg.decks.map((d) =>
           `<button type="button" class="deck ${d.on ? "on" : ""}" data-h="set" data-k="deck" data-v="${d.k}">${esc(d.label)}<small>${d.n}</small></button>`).join("")}</div></div>
         ${row("Time", tabs("secs", [2, 3, 5, 8].map((n) => [n, n + "s"]), cfg.seconds))}
         ${relay ? row("Turns per team", tabs("turns", [1, 2, 3, 5].map((n) => [n, n]), cfg.turns))
-          + row("Chances per player", tabs("chances", [1, 2, 3].map((n) => [n, n]), cfg.chances))
+          + (cfg.neg ? "" : row("Chances per player", tabs("chances", [1, 2, 3].map((n) => [n, n]), cfg.chances)))
           + row("Order", tabs("laps", [[1, "Once"], [2, "Down & back"]], cfg.laps))
-          : row("Faces", tabs("rounds", [10, 20, 30, 50].map((n) => [n, n]), cfg.rounds))}
+          : row("Rounds", tabs("rounds", [10, 20, 30, 50].map((n) => [n, n]), cfg.rounds))}
+        ${row(relay ? "Skips per turn" : "Skips", tabs("skips", [[0, 0], [1, 1], [2, 2], [-1, "∞"]], cfg.skips))}
+        ${row("Negative scoring", `<button type="button" class="switch ${cfg.neg ? "on" : ""}" role="switch" aria-checked="${cfg.neg}" aria-label="Negative scoring" data-h="set" data-k="neg" data-v="${cfg.neg ? "off" : "on"}"><i></i></button>`)}
       </section>`;
     };
 
@@ -1170,6 +1274,9 @@
     tick();
     paint();
   }
+
+  // Keep the fullscreen buttons in sync (also when leaving fullscreen with the browser's own controls)
+  if (!IS_HOST_VIEW) document.addEventListener("fullscreenchange", () => render());
 
   // ---------- boot ----------
   if (IS_HOST_VIEW) {
