@@ -25,7 +25,10 @@ for (const [key, deck] of Object.entries(window.DECKS)) {
     for (const t of chunk) {
       let title = t; while (norm.has(title)) title = norm.get(title);
       const p = pages.get(title);
+      const file = p?.thumbnail ? decodeURIComponent(p.thumbnail.source.split("/").slice(-2).join("/")) : "";
+      const notPhoto = file && (/\.svg\b/i.test(file) || /signature|autograph|logo|coat[_ ]of[_ ]arms|flag[_ ]of|emblem|wordmark/i.test(file) || p.thumbnail.width / p.thumbnail.height > 1.6);
       if (!p || p.missing || !p.thumbnail) { bad++; console.log(`✗ [${key}] ${t}`, p ? (p.missing ? "missing" : "no image") : "not found"); }
+      else if (notPhoto) { bad++; console.log(`✗ [${key}] ${t} not a photo: ${file}`); }
       else if (/disambiguation/i.test(p.description || "")) { bad++; console.log(`✗ [${key}] ${t} disambiguation`); }
     }
   }

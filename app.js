@@ -5,11 +5,14 @@
 (() => {
   "use strict";
 
-  const IS_HOST_VIEW = new URLSearchParams(location.search).get("view") === "host";
+  const PARAMS = new URLSearchParams(location.search);
+  const REMOTE_CODE = (PARAMS.get("remote") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
+  // This page is a remote (laptop window or phone) rather than the game itself
+  const IS_HOST_VIEW = PARAMS.get("view") === "host" || !!REMOTE_CODE;
   const channel = "BroadcastChannel" in window ? new BroadcastChannel("face-relay") : null;
   const $app = document.getElementById("app");
   const STORE_KEY = "face-relay:settings:v2";
-  const CACHE_KEY = "face-relay:wiki:v1";
+  const CACHE_KEY = "face-relay:wiki:v2";   // v2: non-photo images filtered out
   const SEEN_KEY = "face-relay:seen:v1";
 
   // ---------- helpers ----------
@@ -47,14 +50,15 @@
     rounds: 20,   // shout-out: number of faces
     customNames: "",
     muted: false,
+    tvMode: false,  // higher-contrast look for TVs
   };
 
   function loadSettings() {
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; } catch { return { ...defaults }; }
   }
   function saveSettings() {
-    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted } = S;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted })); } catch {}
+    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode } = S;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode })); } catch {}
   }
 
   // ---------- sound ----------
@@ -93,6 +97,17 @@
     return r.json();
   }
 
+  // Wikipedia sometimes uses a signature, logo, flag or diagram as a page's main image.
+  // Those are almost always SVG drawings, have tell-tale file names, or are very wide.
+  function isPhoto(thumb) {
+    if (!thumb?.source) return false;
+    const file = decodeURIComponent(thumb.source.split("/").slice(-2).join("/"));
+    if (/\.svg\b/i.test(file)) return false;
+    if (/signature|autograph|logo|coat[_ ]of[_ ]arms|flag[_ ]of|emblem|wordmark/i.test(file)) return false;
+    if (thumb.width && thumb.height && thumb.width / thumb.height > 1.6) return false;
+    return true;
+  }
+
   // Resolve a list of titles → [{key, name, desc, img}] (cached for a week)
   async function fetchPeople(titles) {
     const cache = readCache();
@@ -114,7 +129,7 @@
         let title = t, guard = 0;
         while (norm.has(title) && guard++ < 5) title = norm.get(title);
         const p = pages.get(title);
-        if (p && !p.missing && p.thumbnail) {
+        if (p && !p.missing && isPhoto(p.thumbnail)) {
           const entry = { key: t, name: cleanName(p.title), desc: p.description || "", img: p.thumbnail.source, at: now };
           cache[t] = entry; out.set(t, entry);
         }
@@ -153,8 +168,11 @@
     // shout
     round: 0, awarded: null,
     deadline: 0, secondsLeft: 0, lastTick: -1,
+    paused: false, pauseLeft: 0, undone: false,   // pause / undo
+    undoStack: [],
     hostConnected: false,
   };
+  const GAME_KEY = "face-relay:game:v1";
   // Saved settings from older versions: cricket merged into sports; drop decks that no longer exist
   S.decks = [...new Set((S.decks || []).map((d) => (d === "cricket" ? "sports" : d)))].filter((d) => window.DECKS[d]);
   S.teamCount = clamp(+S.teamCount || 2, 1, MAX_TEAMS);
@@ -181,9 +199,13 @@
     S.teamColors[t] = c;
   }
 
-  // Answering order inside a team: 1..n, or 1..n then n..1 for "down & back"
+  // Answering order for the current team. Every team gets the same number of faces per turn
+  // (the size of the biggest team); smaller teams go around again: P1, P2, P1, P2.
+  // "Down & back" then reverses that order.
   function chainOrder() {
-    const base = Array.from({ length: S.teamSizes[S.team] }, (_, i) => i);
+    const size = S.teamSizes[S.team];
+    const len = Math.max(...S.teamSizes.slice(0, S.teamCount));
+    const base = Array.from({ length: len }, (_, i) => i % size);
     return S.laps === 2 ? base.concat(base.slice().reverse()) : base;
   }
   const playerLabel = (i) => `Player ${i + 1}`;
@@ -210,6 +232,8 @@
 
   // ---------- game flow ----------
   async function startGame() {
+    enterFullscreen();   // must run before the first await (needs the click/keypress)
+    clearGame();
     saveSettings();
     S.screen = "loading"; S.error = ""; S.loadPct = 0; S.loadMsg = "Loading"; render();
 
@@ -247,26 +271,66 @@
     S.scores = Array(S.teamCount).fill(0);
     S.clears = Array(S.teamCount).fill(0);
     S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
-    S.round = 0; S.awarded = null;
+    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false;
     S.screen = "ready"; render();
   }
 
   function go() {
     if (S.mode === "shout") S.round++;
     nextCard();
-    S.result = null; S.awarded = null;
+    S.result = null; S.awarded = null; S.paused = false; S.undone = false;
     S.deadline = performance.now() + S.seconds * 1000;
     S.lastTick = -1;
     S.screen = "show"; sfx.go(); render();
   }
 
-  function stopClock() { S.secondsLeft = Math.max(0, (S.deadline - performance.now()) / 1000); }
+  const timeLeft = () => Math.max(0, S.paused ? S.pauseLeft : (S.deadline - performance.now()) / 1000);
+
+  // ---- Undo: remember the game right before every call (correct / wrong / timeout / award)
+  function snapshot() {
+    S.undoStack.push({
+      scores: S.scores.slice(), clears: S.clears.slice(), team: S.team, turnNo: S.turnNo, link: S.link,
+      run: S.run, misses: S.misses, round: S.round, card: S.card, left: timeLeft(),
+    });
+    if (S.undoStack.length > 30) S.undoStack.shift();
+  }
+  function undo() {
+    if (!["show", "result", "turnEnd", "ready", "final"].includes(S.screen)) return;
+    const u = S.undoStack.pop();
+    if (!u) return toast("Nothing to undo");
+    document.getElementById("confetti").innerHTML = "";
+    Object.assign(S, { scores: u.scores, clears: u.clears, team: u.team, turnNo: u.turnNo, link: u.link,
+      run: u.run, misses: u.misses, round: u.round, card: u.card });
+    // Back on the same face with the clock frozen, ready to be judged again
+    S.result = null; S.awarded = null; S.cleared = false;
+    S.screen = "show"; S.paused = true; S.pauseLeft = u.left; S.undone = true;
+    render();
+  }
+
+  // ---- Pause: freezes the clock and hides the face (no peeking while paused)
+  function togglePause() {
+    if (S.screen !== "show") return;
+    if (S.paused) { S.deadline = performance.now() + S.pauseLeft * 1000; S.paused = false; S.undone = false; }
+    else { S.pauseLeft = timeLeft(); S.paused = true; }
+    render();
+  }
+
+  // ---- Skip: swap the face for a new one, full time, no penalty
+  function skip() {
+    if (S.screen !== "show" || (S.paused && !S.undone)) return;
+    nextCard();
+    S.paused = false; S.undone = false;
+    S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
+    sfx.go(); render();
+  }
+
+  function stopClock() { S.secondsLeft = timeLeft(); }
 
   // Relay judging
   function judge(correct) {
     if (S.mode !== "relay" || inputLocked()) return;
-    if (S.screen !== "show") return;
-    stopClock();
+    if (S.screen !== "show" || (S.paused && !S.undone)) return;
+    stopClock(); snapshot(); S.paused = false; S.undone = false;
     S.result = correct ? "correct" : "wrong";
     if (correct) { S.scores[S.team]++; S.run++; sfx.correct(); }
     else { S.misses++; sfx.wrong(); }
@@ -275,6 +339,7 @@
   }
   let autoTimer = null;
   function timeUp() {
+    snapshot();
     if (S.mode === "relay") {
       S.secondsLeft = 0; S.misses++; S.result = "timeout"; S.screen = "result"; sfx.wrong(); render();
     } else {
@@ -307,12 +372,12 @@
     }
   }
 
-  function finish() { S.screen = "final"; sfx.win(); confetti(); render(); }
+  function finish() { S.screen = "final"; sfx.win(); confetti(); render(); clearGame(); }
 
   // Shout-out: award a team
   function award(t) {
-    if (S.mode !== "shout" || S.screen !== "show" || inputLocked()) return;
-    stopClock();
+    if (S.mode !== "shout" || S.screen !== "show" || (S.paused && !S.undone) || inputLocked()) return;
+    stopClock(); snapshot(); S.paused = false; S.undone = false;
     if (t >= 0 && t < S.teamCount) { S.scores[t]++; S.awarded = t; sfx.correct(); }
     else { S.awarded = -1; sfx.wrong(); }
     S.screen = "result"; render();
@@ -323,7 +388,9 @@
     switch (S.screen) {
       case "setup": return startGame();
       case "ready": return go();
-      case "show": if (S.mode === "relay") judge(true); else award(-1); return;
+      case "show":
+        if (S.paused && !S.undone) return togglePause();   // Space resumes a paused face
+        if (S.mode === "relay") judge(true); else award(-1); return;
       case "result": case "turnEnd": return advance();
       case "final": return toMenu();
     }
@@ -350,14 +417,45 @@
     clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = "";
     S.scores = Array(S.teamCount).fill(0); S.clears = Array(S.teamCount).fill(0);
     S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
-    S.round = 0; S.awarded = null; S.screen = "ready"; render();
+    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false; S.screen = "ready"; render();
   }
 
-  function toMenu() { clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = ""; S.screen = "setup"; render(); }
+  function toMenu() { clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = ""; clearGame(); S.screen = "setup"; render(); }
+
+  // ---------- save / resume (localStorage on this device) ----------
+  const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
+    "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi"];
+  function saveGame() {
+    if (!["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
+    const g = { savedAt: Date.now() };
+    GAME_FIELDS.forEach((k) => (g[k] = S[k]));
+    if (g.screen === "show") g.screen = "ready";   // a face that was on screen is re-dealt on resume
+    // Uploaded photos only live in this tab's memory, so they can't be resumed
+    g.queue = S.queue.filter((c) => !String(c.img).startsWith("blob:"));
+    if (g.card && String(g.card.img).startsWith("blob:")) { g.card = null; if (g.screen === "result") g.screen = "ready"; }
+    try { localStorage.setItem(GAME_KEY, JSON.stringify(g)); } catch {}
+  }
+  function loadGame() {
+    try {
+      const g = JSON.parse(localStorage.getItem(GAME_KEY) || "null");
+      if (!g || Date.now() - g.savedAt > 12 * 3600e3 || !g.queue?.length) return null;
+      return g;
+    } catch { return null; }
+  }
+  function clearGame() { try { localStorage.removeItem(GAME_KEY); } catch {} }
+  function resumeGame() {
+    const g = loadGame(); if (!g) return;
+    enterFullscreen();
+    GAME_FIELDS.forEach((k) => { if (k in g) S[k] = g[k]; });
+    S.queue = g.queue; S.qi = Math.min(g.qi || 0, S.queue.length - 1);
+    if (!S.card && S.screen === "result") S.screen = "ready";
+    S.undoStack = []; S.paused = false; S.undone = false;
+    saveSettings(); render();
+  }
 
   // ---------- timer loop ----------
   function loop() {
-    if (S.screen === "show" && !IS_HOST_VIEW) {
+    if (S.screen === "show" && !S.paused && !IS_HOST_VIEW) {
       const left = (S.deadline - performance.now()) / 1000;
       const bar = document.getElementById("timebar"), num = document.getElementById("timenum");
       const frac = Math.max(0, left / S.seconds);
@@ -397,6 +495,11 @@
   // Line icons (stroke = currentColor)
   const svg = (d, extra = "") => `<svg class="ic" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra}>${d}</svg>`;
   const IC = {
+    pause: svg('<path d="M9 5v14M15 5v14"/>'),
+    play: svg('<path d="M7 5l12 7-12 7z"/>'),
+    skip: svg('<path d="M5 5l10 7-10 7z"/><path d="M19 5v14"/>'),
+    undo: svg('<path d="M9 14L4 9l5-5"/><path d="M4 9h11a5 5 0 0 1 0 10h-3"/>'),
+    tv: svg('<rect x="3" y="5" width="18" height="12" rx="2"/><path d="M8 20h8"/>'),
     remote: svg('<rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M11 18h2"/>'),
     expand: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
     soundOn: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
@@ -415,11 +518,13 @@
   const inputLocked = () => performance.now() < lockUntil;
 
   function render() {
+    document.body.classList.toggle("tv", !!S.tvMode);
     if (IS_HOST_VIEW) return;
     if (S.screen !== lastScreen) { lastScreen = S.screen; lockUntil = performance.now() + INPUT_LOCK_MS; }
     $app.dataset.screen = S.screen;
     $app.innerHTML = S.screen === "setup" ? viewSetup() : S.screen === "loading" ? viewLoading() : viewGame();
     if (S.screen === "setup") bindSetup();
+    saveGame();
     broadcast();
   }
 
@@ -455,11 +560,17 @@
       <header class="brand">
         <div class="logo"><span class="logo-mark" aria-hidden="true"><i></i><i></i></span><h1>Face Relay</h1></div>
         <div class="top-actions">
-          <button class="ghost" data-act="host" type="button" title="Open a second window on your laptop that shows the answers">${IC.remote} Host remote</button>
+          <button class="ghost" data-act="host" type="button" title="Control the game from your phone">${IC.remote} Remote</button>
+          <button class="ghost ${S.tvMode ? "active" : ""}" data-act="tv" type="button" aria-pressed="${!!S.tvMode}" title="Higher contrast for TVs (T)">${IC.tv} TV mode</button>
           <button class="ghost" data-act="fs" type="button">${IC.expand} Fullscreen</button>
         </div>
       </header>
       ${S.error ? `<div class="err">${esc(S.error)}</div>` : ""}
+      ${(() => { const g = loadGame(); if (!g) return "";
+        const names = g.scores.map((sc, t) => { const pal = TEAMS[g.teamColors?.[t] ?? t] || TEAMS[t]; return `<span class="rs"><i class="dot" style="--c:${pal.color}"></i>${pal.name} ${sc}</span>`; }).join("");
+        return `<div class="resume"><span class="rtitle">Game in progress</span>${names}<span class="spacer"></span>
+          <button class="ghost" data-act="discard" type="button">Discard</button>
+          <button class="big go resume-btn" data-act="resume" type="button">Resume</button></div>`; })()}
       <div class="setup-main">
       <div class="cols">
         <section class="panel">
@@ -578,8 +689,11 @@
         break;
       }
       case "show": {
-        stage = `<div class="showwrap">${photo(false, "live")}</div>
-          <div class="timer"><div class="track"><div id="timebar"></div></div><div id="timenum">${S.seconds}</div></div>`;
+        const left = timeLeft(), frac = Math.max(0, left / S.seconds);
+        const state = S.undone ? "undone" : S.paused ? "paused" : "";
+        stage = `<div class="showwrap ${state}">${photo(false, "live")}
+            ${S.undone ? `<div class="state-chip">Undone · judge again</div>` : S.paused ? `<div class="state-chip">Paused</div>` : ""}</div>
+          <div class="timer"><div class="track"><div id="timebar" style="transform:scaleX(${frac})" data-hot="${frac < 0.34 ? 1 : ""}"></div></div><div id="timenum">${Math.ceil(left)}</div></div>`;
         keys = relay ? "" : `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}`;
         break;
       }
@@ -620,7 +734,10 @@
       ${top}
       <section class="stage">${stage}</section>
       ${bottom}
-      <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${S.hostConnected ? `<span class="kh live">${IC.remote} Host remote on</span>` : ""}
+      <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${S.hostConnected || phoneConns.size ? `<span class="kh live">${IC.remote} Remote on</span>` : ""}
+        ${S.screen === "show" && !S.undone ? `<button class="ghost sm" data-act="pause" type="button" title="Pause (P)">${S.paused ? IC.play : IC.pause} ${S.paused ? "Resume" : "Pause"}</button>` : ""}
+        ${S.screen === "show" && !(S.paused && !S.undone) ? `<button class="ghost sm" data-act="skip" type="button" title="Skip face (S)">${IC.skip} Skip</button>` : ""}
+        ${S.undoStack.length && S.screen !== "final" ? `<button class="ghost sm" data-act="undo" type="button" title="Undo last call (U)">${IC.undo} Undo</button>` : ""}
         <button class="ghost sm" data-act="restart" type="button" title="Restart (R)">${IC.restart} Restart</button>
         <button class="ghost sm icon" data-act="mute" type="button" title="Sound (M)" aria-label="${S.muted ? "Unmute" : "Mute"}">${S.muted ? IC.soundOff : IC.soundOn}</button>
         <button class="ghost sm icon" data-act="fs" type="button" title="Fullscreen (F)" aria-label="Fullscreen">${IC.expand}</button>
@@ -669,18 +786,28 @@
       case "start": return startGame();
       case "primary": return primary();
       case "fs": return toggleFs();
+      case "tv": S.tvMode = !S.tvMode; saveSettings(); return render();
       case "restart": return restart();
+      case "pause": return togglePause();
+      case "skip": return skip();
+      case "undo": return undo();
+      case "resume": return resumeGame();
+      case "discard": clearGame(); return render();
       case "mute": S.muted = !S.muted; saveSettings(); return render();
       case "menu": ask("Quit to menu?", "Quit").then((ok) => ok && toMenu()); return;
-      case "host": return openHost();
+      case "host": return openRemoteDialog();
     }
   });
 
-  function toggleFs() {
-    if (document.fullscreenElement) document.exitFullscreen?.();
-    else document.documentElement.requestFullscreen?.()
+  function enterFullscreen() {
+    if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
+    document.documentElement.requestFullscreen()
       .then(() => navigator.keyboard?.lock?.(["Escape"]).catch(() => {}))
       .catch(() => {});
+  }
+  function toggleFs() {
+    if (document.fullscreenElement) document.exitFullscreen?.();
+    else enterFullscreen();
   }
 
   document.addEventListener("keydown", (e) => {
@@ -696,35 +823,135 @@
     if ((k === "r" || k === "R") && S.screen !== "setup" && S.screen !== "loading") return restart();
     if (/^[0-9]$/.test(k) && S.mode === "shout") return award(k === "0" ? -1 : +k - 1);
     if (k === "f" || k === "F") return toggleFs();
+    if (k === "p" || k === "P") return togglePause();
+    if (k === "s" || k === "S") return skip();
+    if (k === "u" || k === "U") return undo();
     if (k === "m" || k === "M") { S.muted = !S.muted; saveSettings(); return render(); }
+    if (k === "t" || k === "T") { S.tvMode = !S.tvMode; saveSettings(); return render(); }
     if (k === "Escape" && S.screen !== "setup" && S.screen !== "loading") { e.preventDefault(); ask("Quit to menu?", "Quit").then((ok) => ok && toMenu()); }
   });
 
-  // ---------- host remote (BroadcastChannel) ----------
+  // ---------- remote control ----------
+  // Two ways to connect a remote:
+  //  • Phone: scans a QR code and connects straight to this browser over WebRTC (PeerJS).
+  //    The free PeerJS server only introduces the two devices; game messages go device to device.
+  //  • Laptop window: ?view=host, synced over BroadcastChannel (same browser).
+  const PEERJS_SRC = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
+  const QR_SRC = "https://unpkg.com/qrcode-generator@1.4.4/qrcode.js";
+  const PEER_PREFIX = "facerelay-v1-";
+  const ROOM_KEY = "face-relay:room:v1";
+  const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+  const randomCode = () => Array.from({ length: 4 }, () => CODE_ALPHABET[Math.floor(Math.random() * CODE_ALPHABET.length)]).join("");
+  const scripts = {};
+  const loadScript = (src) => scripts[src] || (scripts[src] = new Promise((res, rej) => {
+    const el = document.createElement("script"); el.src = src; el.onload = res; el.onerror = () => { delete scripts[src]; rej(new Error("load")); };
+    document.head.appendChild(el);
+  }));
+
+  let peer = null, roomCode = null, roomStatus = "off";   // off | starting | ready | error
+  const phoneConns = new Set();
+
+  async function startRoom() {
+    if (peer || roomStatus === "starting") return;
+    roomStatus = "starting"; paintRemoteDialog();
+    try { await loadScript(PEERJS_SRC); } catch { roomStatus = "error"; return paintRemoteDialog(); }
+    let code = localStorage.getItem(ROOM_KEY) || randomCode();
+    openPeer(code, 0);
+  }
+  function openPeer(code, attempt) {
+    peer = new window.Peer(PEER_PREFIX + code, { debug: 0 });
+    peer.on("open", () => { roomCode = code; roomStatus = "ready"; try { localStorage.setItem(ROOM_KEY, code); } catch {} paintRemoteDialog(); });
+    peer.on("connection", (conn) => {
+      conn.on("open", () => { phoneConns.add(conn); broadcast(); render(); paintRemoteDialog(); });
+      conn.on("data", handleRemote);
+      const drop = () => { if (phoneConns.delete(conn)) { render(); paintRemoteDialog(); } };
+      conn.on("close", drop); conn.on("error", drop);
+    });
+    peer.on("disconnected", () => { try { peer.reconnect(); } catch {} });
+    peer.on("error", (e) => {
+      if (e.type === "unavailable-id") {
+        // After a refresh the old room can take a few seconds to free up; then fall back to a new code
+        peer.destroy(); peer = null;
+        return setTimeout(() => openPeer(attempt < 3 ? code : randomCode(), attempt + 1), 2500);
+      }
+      if (["network", "server-error", "socket-error", "socket-closed", "browser-incompatible"].includes(e.type)) { roomStatus = "error"; paintRemoteDialog(); }
+    });
+  }
+  // Reconnect the room automatically after a refresh if a phone was used before
+  if (!IS_HOST_VIEW && localStorage.getItem(ROOM_KEY)) setTimeout(startRoom, 500);
+
+  function handleRemote(m) {
+    if (!m || typeof m !== "object") return;
+    if (m.type === "hello") return broadcast();
+    if (m.type !== "cmd") return;
+    ({ primary, correct: () => judge(true), wrong: () => judge(false), award: () => award(m.arg),
+       pause: togglePause, skip, undo })[m.cmd]?.();
+  }
+
+  const isLocalhost = () => /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
+  const remoteUrl = () => `${location.origin}${location.pathname}?remote=${roomCode}`;
+
+  async function openRemoteDialog() {
+    let d = document.getElementById("remote-dlg");
+    if (!d) { d = document.createElement("dialog"); d.id = "remote-dlg"; d.className = "remote-dlg"; document.body.appendChild(d); }
+    d.addEventListener("click", (e) => {
+      const b = e.target.closest("[data-r]"); if (!b) return;
+      if (b.dataset.r === "close") d.close();
+      if (b.dataset.r === "laptop") { d.close(); openHost(); }
+      if (b.dataset.r === "retry") { roomStatus = "off"; peer?.destroy(); peer = null; startRoom(); }
+    });
+    if (!d.open) d.showModal();
+    paintRemoteDialog();
+    startRoom();
+    loadScript(QR_SRC).then(paintRemoteDialog).catch(() => {});
+  }
+  function paintRemoteDialog() {
+    const d = document.getElementById("remote-dlg"); if (!d || !d.open) return;
+    let qr = "";
+    if (roomStatus === "ready" && window.qrcode) {
+      const q = window.qrcode(0, "M"); q.addData(remoteUrl()); q.make();
+      qr = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
+    }
+    const n = phoneConns.size;
+    d.innerHTML = `<h2>Phone remote</h2>
+      ${roomStatus === "error" ? `<p class="r-note bad">Couldn't connect. Check the internet and try again.</p><button class="big" data-r="retry">Try again</button>`
+        : roomStatus !== "ready" ? `<div class="r-qr loading"><div class="spinner"></div></div>`
+        : `<div class="r-qr">${qr}</div>
+           <p class="r-code">${roomCode}</p>
+           <p class="r-note">Scan with your phone camera, or open<br><b>${esc(remoteUrl().replace(/^https?:\/\//, ""))}</b></p>
+           ${isLocalhost() ? `<p class="r-note warn">Phones can't open “localhost”. Use the live site or your laptop's Wi-Fi address instead.</p>` : ""}
+           <p class="r-conn ${n ? "on" : ""}">${n ? `${n} phone${n > 1 ? "s" : ""} connected` : "Waiting for a phone…"}</p>`}
+      <div class="r-actions">
+        <button class="ghost" data-r="laptop" type="button">Use a laptop window</button>
+        <button class="big" data-r="close" type="button">Done</button>
+      </div>`;
+  }
+
   function openHost() {
     if (!channel) return toast("Not supported in this browser");
-    const w = window.open(location.pathname + "?view=host", "face-relay-host", "width=460,height=760");
+    const w = window.open(location.pathname + "?view=host", "face-relay-host", "width=420,height=720");
     if (!w) toast("Pop-up blocked");
   }
 
   function broadcast() {
-    if (!channel || IS_HOST_VIEW) return;
+    if (IS_HOST_VIEW) return;
     const relay = S.mode === "relay";
-    channel.postMessage({
+    const cur = relay && S.scores.length && !["setup", "loading", "final"].includes(S.screen);
+    const msg = {
       type: "state",
       screen: S.screen, mode: S.mode,
-      answer: S.card && ["show", "judge", "result"].includes(S.screen) ? { name: S.card.name, desc: S.card.desc, img: S.card.img } : null,
-      // Pre-announce the next face so the host knows it before it's shown
+      answer: S.card && ["show", "result"].includes(S.screen) ? { name: S.card.name, desc: S.card.desc, img: S.card.img } : null,
       upcoming: S.screen === "ready" && S.queue.length ? (() => { const c = S.queue[S.qi % S.queue.length]; return { name: c.name, desc: c.desc, img: c.img }; })() : null,
-      current: relay && S.scores.length && !["setup", "loading", "final"].includes(S.screen) ? {
-        team: S.team, player: `P${(chainOrder()[S.link] ?? 0) + 1}`, chances: S.chances, misses: Math.min(S.misses, S.chances),
-        turn: Math.min(S.turnNo, S.turns), turns: S.turns, link: S.link, chain: chainOrder().length } : null,
-      status: S.screen === "setup" ? "In the menu"
-        : relay ? `${teamName(S.team)} · ${playerLabel(chainOrder()[S.link] ?? 0)}${S.chances > 1 ? ` (chance ${Math.min(S.misses + 1, S.chances)}/${S.chances})` : ""} · turn ${Math.min(S.turnNo, S.turns)}/${S.turns}`
-        : `Face ${S.round}/${S.rounds}`,
-      teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s, cur: relay && t === S.team })),
-      deadline: S.screen === "show" ? Date.now() + (S.deadline - performance.now()) : 0,
-    });
+      team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null,
+      player: cur ? `P${(chainOrder()[S.link] ?? 0) + 1}` : null,
+      chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
+      round: !relay && S.screen !== "setup" ? `Face ${Math.max(S.round, 1)}/${S.rounds}` : null,
+      teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
+      paused: S.paused, undone: S.undone, canUndo: S.undoStack.length > 0,
+      left: S.screen === "show" ? timeLeft() : 0,
+    };
+    channel?.postMessage(msg);
+    for (const c of phoneConns) if (c.open) { try { c.send(msg); } catch {} }
   }
 
   if (channel && !IS_HOST_VIEW) {
@@ -732,67 +959,120 @@
       const m = ev.data || {};
       if (m.type === "hello") { S.hostConnected = true; broadcast(); render(); }
       if (m.type === "bye") { S.hostConnected = false; render(); }
-      if (m.type !== "cmd") return;
-      if (m.cmd === "primary") primary();
-      if (m.cmd === "correct") judge(true);
-      if (m.cmd === "wrong") judge(false);
-      if (m.cmd === "award") award(m.arg);
+      handleRemote(m);
     };
   }
 
-  // Host view: a compact remote that shows the answer
-  function hostView() {
-    document.title = "Face Relay — Host remote";
+  // ---------- the remote itself (phone or laptop window) ----------
+  function remoteView() {
+    document.title = "Face Relay remote";
     document.body.classList.add("hostview");
-    let st = null;
-    const send = (cmd, arg) => channel.postMessage({ type: "cmd", cmd, arg });
-    const paint = () => {
-      if (!st) { $app.innerHTML = `<main class="host"><h1>Host remote</h1><p class="sub">Waiting for the game tab</p></main>`; return; }
-      const a = st.answer || st.upcoming;
+    let st = null, conn = "connecting", send = () => {}, retryTimer = null, wake = null;
+
+    // Only the controls that make sense right now
+    const controls = () => {
       const relay = st.mode === "relay";
-      let btns = "";
-      if (st.screen === "ready") btns = `<button class="big go" data-h="primary">Show</button>`;
-      else if (st.screen === "show" && relay) btns = `<div class="hrow"><button class="big bad" data-h="wrong">Wrong</button><button class="big good" data-h="primary">Correct</button></div>`;
-      else if (st.screen === "show") btns = `<div class="hgrid">${st.teams.map((t, i) => `<button class="big" style="background:${t.color};color:#fff" data-h="award" data-arg="${i}">${esc(t.name)}</button>`).join("")}<button class="big bad" data-h="award" data-arg="-1">Nobody</button></div>`;
-      else if (st.screen === "result" || st.screen === "turnEnd") btns = `<button class="big go" data-h="primary">Continue</button>`;
-      else if (st.screen === "final") btns = `<button class="big go" data-h="primary">Menu</button>`;
-      $app.innerHTML = `<main class="host">
-        ${st.current ? `<div class="hnow" style="--c:${st.teams[st.current.team].color}"><span class="hteam"><i class="dot"></i>${esc(st.teams[st.current.team].name)}</span>
-          <span class="hplayer">${st.current.player}<small>${st.current.link + 1}/${st.current.chain}</small></span>
-          ${st.current.chances > 1 ? `<span class="hpips">${Array.from({ length: st.current.chances }, (_, k) => `<i class="${k < st.current.misses ? "used" : ""}"></i>`).join("")}</span>` : ""}
-          <span class="hturn">Turn ${st.current.turn}/${st.current.turns}</span></div>` : `<p class="eyebrow">${esc(st.status)}</p>`}
-        ${a ? `<div class="hans ${st.answer ? "" : "next"}"><img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer" /><div><small>${st.answer ? "Now" : "Next"}</small><b>${esc(a.name)}</b><em>${esc(a.desc)}</em></div></div>` : ""}
-        ${st.screen === "show" ? `<div class="htimer" id="htimer"></div>` : ""}
-        <div class="hbtns">${btns}</div>
-        ${st.teams?.length && st.screen !== "setup" ? `<ul class="hscores">${st.teams.map((t) => `<li class="${t.cur ? "cur" : ""}" style="--c:${t.color}"><span><i class="dot"></i> ${esc(t.name)}</span><b>${t.score}</b></li>`).join("")}</ul>` : ""}
+      const B = (cmd, label, cls = "", arg) => `<button class="big ${cls}" data-h="${cmd}" ${arg !== undefined ? `data-arg="${arg}"` : ""}>${label}</button>`;
+      const G = (cmd, label) => `<button class="ghost" data-h="${cmd}">${label}</button>`;
+      const undoBtn = st.canUndo ? G("undo", `${IC.undo} Undo`) : "";
+      switch (st.screen) {
+        case "ready": return { main: B("primary", "Show face"), extra: undoBtn };
+        case "show":
+          if (st.paused && !st.undone) return { main: B("pause", "Resume") };
+          if (!relay) return { main: `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`,
+                               extra: st.undone ? "" : G("skip", `${IC.skip} Skip`) + G("pause", `${IC.pause} Pause`) };
+          return { main: `<div class="r-two">${B("wrong", "Wrong", "neutral")}${B("primary", "Correct")}</div>`,
+                   extra: st.undone ? "" : G("skip", `${IC.skip} Skip`) + G("pause", `${IC.pause} Pause`) };
+        case "result": case "turnEnd": return { main: B("primary", "Next"), extra: undoBtn };
+        case "final": return { main: B("primary", "Back to menu") };
+        default: return { main: "" };
+      }
+    };
+
+    const paint = () => {
+      if (conn !== "on" || !st) {
+        const msg = conn === "notfound" ? `No game found for <b>${esc(REMOTE_CODE)}</b>.<br>Open the game on the TV and press Remote.`
+          : conn === "lost" ? "Connection lost. Reconnecting…"
+          : conn === "error" ? "Couldn't connect. Check the internet."
+          : "Connecting to the TV…";
+        $app.innerHTML = `<main class="remote center-r"><div class="spinner ${conn === "notfound" || conn === "error" ? "off" : ""}"></div><p class="r-msg">${msg}</p>
+          ${conn === "notfound" || conn === "error" ? `<button class="big" data-r="retry">Try again</button>` : ""}</main>`;
+        return;
+      }
+      const a = st.answer || st.upcoming;
+      const who = st.team ? `<i class="dot" style="--c:${st.team.color}"></i>${esc(st.team.name)} · <b>${st.player}</b>${st.chance ? ` · chance ${st.chance}` : ""}` : st.round ? esc(st.round) : "";
+      const c = controls();
+      $app.innerHTML = `<main class="remote">
+        ${who ? `<p class="r-who">${who}</p>` : ""}
+        ${st.screen === "setup" ? `<p class="r-msg">Start the game on the TV</p>` : ""}
+        ${a && st.screen !== "final" ? `<div class="r-face ${st.answer ? "" : "next"}"><img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" />
+          <div><small>${st.answer ? "On screen" : "Next"}</small><b>${esc(a.name)}</b>${a.desc ? `<em>${esc(a.desc)}</em>` : ""}</div></div>` : ""}
+        ${st.screen === "show" ? `<div class="r-timer" id="htimer"></div>` : ""}
+        ${st.screen === "final" ? `<p class="r-msg">Game over</p>` : ""}
+        <div class="r-main">${c.main}</div>
+        ${c.extra ? `<div class="r-extra">${c.extra}</div>` : ""}
       </main>`;
     };
-    channel.onmessage = (ev) => { if (ev.data?.type === "state") { st = ev.data; paint(); } };
+
+    const onState = (m) => {
+      if (m?.type !== "state") return;
+      st = m; st.localDeadline = st.screen === "show" && !st.paused ? Date.now() + st.left * 1000 : 0;
+      paint();
+    };
+
+    async function connectPhone() {
+      clearTimeout(retryTimer);
+      try { await loadScript(PEERJS_SRC); } catch { conn = "error"; return paint(); }
+      const p = new window.Peer({ debug: 0 });
+      const retry = (state, ms) => { conn = state; paint(); try { p.destroy(); } catch {} retryTimer = setTimeout(connectPhone, ms); };
+      p.on("open", () => {
+        const c = p.connect(PEER_PREFIX + REMOTE_CODE, { reliable: true });
+        const t = setTimeout(() => { if (!c.open) retry("notfound", 4000); }, 10000);
+        c.on("open", () => { clearTimeout(t); conn = "on"; send = (cmd, arg) => c.open && c.send({ type: "cmd", cmd, arg }); c.send({ type: "hello" }); paint(); });
+        c.on("data", onState);
+        c.on("close", () => retry("lost", 1500));
+      });
+      p.on("error", (e) => retry(e.type === "peer-unavailable" ? "notfound" : "error", 4000));
+    }
+
+    if (REMOTE_CODE) connectPhone();
+    else {
+      conn = "on";
+      send = (cmd, arg) => channel.postMessage({ type: "cmd", cmd, arg });
+      channel.onmessage = (ev) => onState(ev.data);
+      addEventListener("beforeunload", () => channel.postMessage({ type: "bye" }));
+      channel.postMessage({ type: "hello" });
+    }
+
     document.addEventListener("click", (e) => {
+      if (!wake && navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => (wake = w)).catch(() => {});   // keep the phone awake
+      if (e.target.closest('[data-r="retry"]')) { conn = "connecting"; paint(); return connectPhone(); }
       const b = e.target.closest("[data-h]"); if (!b) return;
       send(b.dataset.h, b.dataset.arg !== undefined ? +b.dataset.arg : undefined);
     });
     document.addEventListener("keydown", (e) => {
-      if (!st) return;
-      if (e.key === " ") { e.preventDefault(); send("primary"); }
-      if (e.key === "ArrowLeft") send("wrong");
-      if (/^[0-9]$/.test(e.key) && st.mode === "shout") send("award", e.key === "0" ? -1 : +e.key - 1);
+      if (!st || e.repeat) return;
+      const k = e.key;
+      if (k === " ") { e.preventDefault(); send("primary"); }
+      if (k === "ArrowLeft") send("wrong");
+      if (k === "p" || k === "P") send("pause");
+      if (k === "s" || k === "S") send("skip");
+      if (k === "u" || k === "U") send("undo");
+      if (/^[0-9]$/.test(k) && st.mode === "shout") send("award", k === "0" ? -1 : +k - 1);
     });
     const tick = () => {
       const el = document.getElementById("htimer");
-      if (el && st?.deadline) el.textContent = Math.max(0, (st.deadline - Date.now()) / 1000).toFixed(1) + "s";
+      if (el && st) el.textContent = Math.ceil(st.localDeadline ? Math.max(0, (st.localDeadline - Date.now()) / 1000) : st.left || 0);
       requestAnimationFrame(tick);
     };
     tick();
-    addEventListener("beforeunload", () => channel.postMessage({ type: "bye" }));
-    channel.postMessage({ type: "hello" });
     paint();
   }
 
   // ---------- boot ----------
   if (IS_HOST_VIEW) {
-    if (!channel) $app.innerHTML = `<main class="host"><h1>Not supported in this browser</h1></main>`;
-    else hostView();
+    if (!REMOTE_CODE && !channel) $app.innerHTML = `<main class="remote center-r"><p class="r-msg">Not supported in this browser</p></main>`;
+    else remoteView();
   } else {
     render();
     requestAnimationFrame(loop);

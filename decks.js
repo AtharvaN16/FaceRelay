@@ -14,7 +14,7 @@ window.DECKS = {
       "Kartik Aaryan", "Shraddha Kapoor", "Tiger Shroff", "Sanjay Dutt",
       "Rajinikanth", "Kamal Haasan", "Vijay (actor)", "Prabhas", "Allu Arjun",
       "Mahesh Babu", "Ram Charan", "N. T. Rama Rao Jr.", "Dulquer Salmaan", "Dhanush",
-      "Suriya", "Chiranjeevi", "Mohanlal", "Mammootty", "Nayanthara",
+      "Suriya", "Chiranjeevi", "Mohanlal", "Mammootty", "Tamannaah Bhatia",
       "Samantha Ruth Prabhu", "Rashmika Mandanna"
     ]
   },

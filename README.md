@@ -14,7 +14,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Put it on the TV
 - **Chrome:** ⋮ → *Cast…* → *Cast tab*, then press **F** for fullscreen.
 - **Mac:** AirPlay / Screen Mirroring, or HDMI.
-- **Host remote:** opens a small window on your laptop that shows the answer and the next face. Cast only the main tab.
+- **Remote:** press **Remote** in the menu and scan the QR code with your phone. The phone shows the answer and only the buttons you need right now (Show face, Correct / Wrong, Skip, Pause, Next, Undo). It connects straight to the game's browser (WebRTC via the free PeerJS server), so there's no backend. Phones can't open `localhost`, so use the live site. **Use a laptop window** opens the same remote in a second window on the laptop.
 
 ## Setup
 - **Teams:** 1–6 teams. Click a team's colour square to change its colour. Use − / + on a team to set its players (1–8).
@@ -23,6 +23,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 
 ## Modes
 - **Relay Chain:** teams take turns, and players answer in order (P1, P2, …).
+  - Every team gets the same number of faces per turn (the size of the biggest team). Smaller teams go around again: P1, P2, P1, P2.
   - Each correct answer scores +1.
   - A wrong answer or timeout uses one of that player's chances; running out of chances ends the team's turn.
   - If the whole team gets its faces right, they get a +3 bonus.
@@ -35,10 +36,17 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 | `Space` | Show face / correct / next |
 | `←` | Wrong |
 | `1`–`6` / `0` | Award a team / nobody (Shout-Out) |
+| `P` | Pause (hides the face, freezes the clock) |
+| `S` | Skip face (new face, no penalty) |
+| `U` | Undo the last call |
+| `T` | TV mode (higher contrast) |
 | `R` | Restart |
 | `F` | Fullscreen |
 | `M` | Mute |
 | `Esc` | Menu |
+
+## Saving
+The game in progress is saved in this browser's local storage. After an accidental refresh or a closed tab, the menu offers **Resume**. Quitting to the menu or finishing a game clears it.
 
 ## Edit the decks
 Edit `decks.js`, then run `npm run verify-decks` to check that every name has a Wikipedia photo.

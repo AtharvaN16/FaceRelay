@@ -431,3 +431,92 @@ dialog.confirm p { margin: 0 0 22px; font-size: 20px; font-weight: 500; color: v
 .hpips i.used { opacity: 0.3; }
 .hturn { margin-left: auto; color: var(--mute); font-size: 13px; }
 .hscores li.cur { background: color-mix(in srgb, var(--c) 16%, var(--surface)); }
+
+/* ---------- TV mode ----------
+   For TVs over HDMI: TV picture processing and black-level mismatches crush near-black greys
+   and faint tints. Lift the darks, separate the surfaces, strengthen tints, borders and text. */
+.ghost.active { background: var(--ink); color: var(--bg); }
+.ghost.active:hover { background: var(--ink); color: var(--bg); }
+body.tv {
+  --bg: #141418;
+  --surface: #222229;
+  --surface-2: #30303a;
+  --card: #2a2a33;
+  --chip: rgba(255, 255, 255, 0.1);
+  --chip-hover: rgba(255, 255, 255, 0.16);
+  --ink: #ffffff;
+  --ink-2: #e4e3de;
+  --mute: #b4b3ad;
+  --mute-2: #8c8b85;
+  --line: rgba(255, 255, 255, 0.16);
+  --line-2: rgba(255, 255, 255, 0.3);
+  font-weight: 500;
+}
+body.tv .who, body.tv .end h2, body.tv figcaption b, body.tv #timenum { font-weight: 600; }
+body.tv figcaption small, body.tv .sub, body.tv .eyebrow { color: var(--ink-2); }
+/* stronger team tints */
+body.tv .link.done, body.tv .score.cur, body.tv .pdots i { background: color-mix(in srgb, var(--c) 34%, var(--bg)); color: color-mix(in srgb, var(--c) 55%, #fff); }
+body.tv .link.fail { background: color-mix(in srgb, var(--bad) 34%, var(--bg)); color: color-mix(in srgb, var(--bad) 55%, #fff); }
+body.tv .link, body.tv .score { font-weight: 600; }
+body.tv .podium li.top, body.tv .hscores li.cur { background: color-mix(in srgb, var(--c) 30%, var(--surface)); }
+/* clearer game signals */
+body.tv .track { height: 10px; }
+body.tv .photo.good .frame { box-shadow: inset 0 0 0 0.9vmin var(--good); }
+body.tv .photo.bad .frame { box-shadow: inset 0 0 0 0.9vmin var(--bad); }
+body.tv .frame { box-shadow: 0 0 0 1px var(--line); }
+body.tv .keys .score, body.tv .keys .prog { font-size: clamp(15px, 1.9vmin, 24px); }
+
+/* pause / undo states on the face */
+.showwrap { position: relative; }
+.showwrap.paused .frame img { filter: blur(28px) brightness(0.6); }
+.state-chip {
+  position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  padding: 0.5em 1.1em; border-radius: 999px; background: rgba(13, 13, 15, 0.82); color: var(--ink);
+  font-size: clamp(16px, 2.4vmin, 32px); font-weight: 500; pointer-events: none;
+}
+.showwrap.undone .state-chip { top: auto; bottom: 1.5vmin; transform: translateX(-50%); }
+/* resume banner */
+.resume { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 16px; padding: 12px 12px 12px 18px; border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.resume .rtitle { font-weight: 500; margin-right: 6px; }
+.resume .rs { display: inline-flex; align-items: center; gap: 6px; color: var(--ink-2); font-size: 14px; padding: 4px 10px; border-radius: 999px; background: var(--chip); }
+.resume .spacer { flex: 1; }
+.big.resume-btn { background: var(--start); color: #1a0b00; font-size: 15px; padding: 0.6em 1.3em; }
+/* host remote: secondary row */
+.hrow3 { display: flex; gap: 8px; }
+.hrow3 .big { flex: 1; font-size: 15px; }
+
+/* ---------- phone / laptop remote: minimal, same controls as the desktop ---------- */
+.remote { max-width: 440px; margin: 0 auto; padding: 22px 18px 28px; min-height: 100svh; display: flex; flex-direction: column; gap: 16px; touch-action: manipulation; }
+.remote.center-r { justify-content: center; align-items: center; text-align: center; }
+.remote .spinner.off { display: none; }
+.r-msg { margin: 0; color: var(--mute); font-size: 15px; text-align: center; line-height: 1.5; }
+.r-msg b { color: var(--ink); }
+.r-who { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--ink-2); font-size: 15px; }
+.r-who b { color: var(--ink); font-weight: 600; }
+.r-face { display: flex; gap: 14px; align-items: center; padding: 10px; border-radius: var(--r-lg); background: var(--surface); }
+.r-face.next { background: transparent; box-shadow: inset 0 0 0 1px var(--line); }
+.r-face img { width: 84px; height: 84px; object-fit: cover; border-radius: var(--r-md); flex-shrink: 0; background: var(--surface-2); }
+.r-face small { display: block; color: var(--mute); font-size: 12px; }
+.r-face b { display: block; font-size: 24px; font-weight: 500; line-height: 1.1; letter-spacing: -0.02em; }
+.r-face em { display: block; font-style: normal; color: var(--mute); font-size: 13px; margin-top: 4px; }
+.r-timer { font-size: 64px; font-weight: 500; line-height: 1; letter-spacing: -0.04em; text-align: center; font-variant-numeric: tabular-nums; }
+.r-main { margin-top: auto; display: grid; gap: 8px; }
+.r-main .big { width: 100%; min-height: 64px; font-size: 19px; }
+.r-two, .r-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.r-grid .big { font-size: 16px; }
+.r-extra { display: flex; justify-content: center; gap: 8px; }
+.r-extra .ghost { padding: 0.7em 1.2em; font-size: 15px; }
+/* TV: remote dialog with QR */
+.remote-dlg { max-width: 380px; width: calc(100% - 48px); text-align: center; }
+.remote-dlg h2 { font-size: 22px; margin: 0 0 16px; }
+.r-qr { width: 220px; height: 220px; margin: 0 auto; padding: 12px; background: #fff; border-radius: 18px; display: grid; place-items: center; }
+.r-qr svg { width: 100%; height: 100%; }
+.r-qr.loading { background: var(--surface-2); }
+.r-code { margin: 14px 0 4px; font-size: 32px; font-weight: 600; letter-spacing: 0.25em; padding-left: 0.25em; }
+.r-note { margin: 4px 0; color: var(--mute); font-size: 13px; }
+.r-note b { color: var(--ink); font-weight: 500; }
+.r-note.warn { color: #f5c542; }
+.r-note.bad { color: var(--bad); }
+.r-conn { margin: 12px 0 0; font-size: 14px; color: var(--mute); }
+.r-conn.on { color: var(--good); }
+.r-actions { display: flex; gap: 8px; justify-content: center; margin-top: 20px; }
