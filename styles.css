@@ -652,3 +652,23 @@ dialog.remote-dlg { overflow: visible; margin-top: max(84px, calc(50vh - 300px))
 /* 16px either side of the divider */
 .keys .txt-btn + .ghost.icon { margin-left: 21px; }
 .keys .txt-btn + .ghost.icon::before { left: -17px; }
+
+/* phone remote: game screens always fit the visible screen, above the browser's bottom bar */
+.remote { padding-bottom: calc(28px + env(safe-area-inset-bottom)); }
+.remote.fit { height: 100vh; height: 100svh; min-height: 0; overflow: hidden; gap: clamp(8px, 1.6svh, 16px); padding-top: clamp(12px, 2.4svh, 22px); padding-bottom: calc(clamp(14px, 2.4svh, 28px) + env(safe-area-inset-bottom)); }
+.remote.fit .r-top { margin-bottom: 0; }
+.remote.fit .r-icon { width: clamp(38px, 5.4svh, 46px); height: clamp(38px, 5.4svh, 46px); }
+.remote.fit .r-card { flex-shrink: 1; min-height: 0; gap: clamp(10px, 2svh, 22px); padding: clamp(14px, 3svh, 40px) 20px; }
+.remote.fit .r-card img { width: clamp(96px, 21svh, 170px); height: clamp(96px, 21svh, 170px); border-radius: clamp(18px, 3svh, 30px); }
+.remote.fit .r-card b { font-size: clamp(19px, 3svh, 24px); }
+.remote.fit .r-timer { min-height: 0; font-size: clamp(44px, 9svh, 88px); }
+.remote.fit .r-main .big { min-height: clamp(52px, 7svh, 64px); }
+.remote.fit .ghost.wide { min-height: clamp(44px, 6svh, 54px); }
+/* phone: turn-end and final summaries */
+.r-summary { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; text-align: center; }
+.r-summary > b { font-size: clamp(34px, 6.5svh, 52px); font-weight: 500; letter-spacing: -0.035em; line-height: 1.05; }
+.r-summary p { margin: 0; color: var(--mute); font-size: 17px; }
+.r-summary p span { font-weight: 500; }
+.r-rank { list-style: none; padding: 0; margin: 6px 0 0; width: 100%; display: grid; gap: 6px; }
+.r-rank li { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; border-radius: var(--r-md); background: var(--surface); font-size: 16px; }
+.r-rank li span { display: inline-flex; align-items: center; gap: 8px; color: var(--ink-2); }

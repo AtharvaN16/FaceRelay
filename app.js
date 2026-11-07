@@ -357,12 +357,14 @@
     if (S.mode === "shout") {
       if (S.screen !== "result") return;
       if (S.round >= S.rounds) return finish();
-      S.screen = "ready"; return render();
+      return go();   // straight to the next face (no extra "ready" press)
     }
     if (S.screen === "result") {
-      if (S.result === "correct" && S.link < chainOrder().length - 1) { S.link++; S.misses = 0; S.result = null; S.screen = "ready"; return render(); }
+      // Same team carries on: deal the next player's face straight away (the chain row shows who's up).
+      // The "Player N" ready screen is only used at the start of each team's turn.
+      if (S.result === "correct" && S.link < chainOrder().length - 1) { S.link++; S.misses = 0; S.result = null; return go(); }
       // Missed, but this player still has chances left: same player, new face
-      if (S.result !== "correct" && S.misses < S.chances) { S.result = null; S.screen = "ready"; return render(); }
+      if (S.result !== "correct" && S.misses < S.chances) { S.result = null; return go(); }
       // Turn over: either the whole chain cleared or someone missed
       S.cleared = S.result === "correct";
       if (S.cleared) { S.scores[S.team] += CHAIN_BONUS; S.clears[S.team]++; sfx.win(); confetti(); }
@@ -1008,6 +1010,17 @@
       chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
       round: !relay && S.screen !== "setup" ? `Face ${Math.max(S.round, 1)}/${S.rounds}` : null,
       teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
+      turnEnd: S.screen === "turnEnd" ? (() => {
+        const nt = (S.team + 1) % S.teamCount, last = S.team === S.teamCount - 1 && S.turnNo >= S.turns;
+        return { headline: S.cleared ? "Chain cleared" : `${S.run} point${S.run === 1 ? "" : "s"}`, color: teamColor(S.team),
+          next: !last && S.teamCount > 1 ? { name: teamName(nt), color: teamColor(nt) } : null, last };
+      })() : null,
+      final: S.screen === "final" ? (() => {
+        const ranked = S.scores.map((sc, t) => ({ name: teamName(t), color: teamColor(t), score: sc })).sort((a, b) => b.score - a.score);
+        const top = ranked.filter((r) => r.score === ranked[0].score);
+        return { headline: S.teamCount === 1 ? `${ranked[0].score} points` : ranked[0].score === 0 ? "Nobody scored" : top.length > 1 ? "Tie" : `${ranked[0].name} wins`,
+          color: top.length === 1 && S.teamCount > 1 && ranked[0].score > 0 ? ranked[0].color : null, ranked };
+      })() : null,
       paused: S.paused, undone: S.undone, skipping: S.skipping, canUndo: S.undoStack.length > 0, muted: !!S.muted,
       settings: S.screen === "setup" ? {
         mode: S.mode, teamCount: S.teamCount, seconds: S.seconds, turns: S.turns, chances: S.chances, laps: S.laps, rounds: S.rounds,
@@ -1042,7 +1055,7 @@
           // "Next" = they got it. A wrong answer is the timeout (or Undo to re-judge)
           return { main: (st.undone ? "" : skipPause) + B("primary", "Next") };
         case "result": return { main: undo + B("primary", "Next") };
-        case "turnEnd": return { main: B("primary", "Next") };
+        case "turnEnd": return { main: B("primary", st.turnEnd?.last ? "See results" : "Next team") };
         case "final": return { main: B("primary", "Back to menu") };
         case "setup": return { main: B("start", "Start game", "start") };
         default: return { main: "" };
@@ -1091,7 +1104,7 @@
       const a = st.skipping ? null : st.answer || st.upcoming;
       const who = st.team ? `<i class="dot" style="--c:${st.team.color}"></i>${esc(st.team.name)} · <b>${st.player}</b>${st.chance ? ` · chance ${st.chance}` : ""}` : st.round ? esc(st.round) : "";
       const c = controls();
-      $app.innerHTML = `<main class="remote">
+      $app.innerHTML = `<main class="remote ${st.screen === "setup" ? "" : "fit"}">
         ${topIcons()}
         ${who ? `<p class="r-who">${who}</p>` : ""}
         ${st.screen === "loading" ? `<div class="r-loading"><div class="spinner"></div><p class="r-msg">Loading faces…</p></div>` : ""}
@@ -1099,7 +1112,10 @@
           <b>${esc(a.name)}</b></div>` : ""}
         ${st.screen === "setup" ? setupRows() : ""}
         ${st.screen === "show" && st.skipping ? `<div class="r-timer r-skip"><p class="r-msg">Skipping</p></div>` : st.screen === "show" ? `<div class="r-timer" id="htimer"></div>` : ""}
-        ${st.screen === "final" ? `<p class="r-msg">Game over</p>` : ""}
+        ${st.turnEnd ? `<div class="r-summary"><b style="color:${st.turnEnd.color}">${esc(st.turnEnd.headline)}</b>
+          ${st.turnEnd.next ? `<p>Next: <span style="color:${st.turnEnd.next.color}">${esc(st.turnEnd.next.name)}</span></p>` : st.turnEnd.last ? `<p>Final scores next</p>` : ""}</div>` : ""}
+        ${st.final ? `<div class="r-summary"><b ${st.final.color ? `style="color:${st.final.color}"` : ""}>${esc(st.final.headline)}</b>
+          <ol class="r-rank">${st.final.ranked.map((r) => `<li><span><i class="dot" style="--c:${r.color}"></i>${esc(r.name)}</span><b>${r.score}</b></li>`).join("")}</ol></div>` : ""}
         <div class="r-main">${c.main}</div>
         ${c.extra ? `<div class="r-extra">${c.extra}</div>` : ""}
       </main>`;
