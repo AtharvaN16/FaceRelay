@@ -18,7 +18,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 
 ## Setup
 - **Teams:** 1–6 teams. Click a team's colour square to change its colour. Use − / + on a team to set its players (1–8).
-- **Personalities:** pick decks (Bollywood & Indian Cinema, Hollywood, Music, Sports Stars, Tech & Business, Scientists, Writers & History; about 260 people). **+ Add** takes extra names (looked up on Wikipedia) or photos; the file name is the answer.
+- **Personalities:** pick decks (Bollywood & Indian Cinema, Hollywood, Music, Sports Stars, Tech & Business, Scientists, Writers & History; about 260 people). To add people or a new category, see [Add faces or a category](#add-faces-or-a-category).
 - **Time:** 2, 3, 5 or 8 seconds per face.
 
 ## Modes
@@ -49,8 +49,43 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Saving
 The game in progress is saved in this browser's local storage. After an accidental refresh or a closed tab, the menu offers **Resume**. Quitting to the menu or finishing a game clears it.
 
-## Edit the decks
-Edit `decks.js`, then run `npm run verify-decks` to check that every name has a Wikipedia photo.
+## Add faces or a category
+All the people live in [`decks.js`](decks.js). Every person is the title of their English Wikipedia page; the game loads the photo and the short description from Wikipedia. You can edit it straight on GitHub, with nothing to install:
+
+1. Open [`decks.js` on GitHub](https://github.com/AtharvaN16/FaceRelay/blob/main/decks.js) and press the pencil icon (**Edit this file**).
+2. Make your change (below).
+3. Press **Commit changes**. Vercel puts the new version live in about 30 seconds. Reload the game on the TV and phone.
+
+**Add a person to a category.** Add their Wikipedia page title, in quotes, followed by a comma, to that category's `people` list:
+```js
+people: [
+  "Shah Rukh Khan", "Amitabh Bachchan",
+  "Kiara Advani",           // ← new
+```
+Use the exact title from the end of their Wikipedia link, with spaces instead of underscores: `en.wikipedia.org/wiki/Kiara_Advani` → `"Kiara Advani"`. When a name is shared, Wikipedia adds a word in brackets, and you include it too: `en.wikipedia.org/wiki/Vijay_(actor)` → `"Vijay (actor)"`.
+
+**Add a new category.** Copy this block and paste it on the line above `// ↑ Paste new categories above this line`:
+```js
+  cricket: {
+    label: "Cricket",
+    emoji: "🏏",
+    people: [
+      "Virat Kohli", "MS Dhoni", "Sachin Tendulkar", "Rohit Sharma", "Jasprit Bumrah"
+    ]
+  },
+```
+- `cricket` is an internal id: lowercase, no spaces, different from the other categories.
+- `label` is the name on the pill in the menu.
+- Aim for 20 or more people so a game doesn't run out.
+
+The new category shows up in the menu's Personalities list; tap it to include it.
+
+**Famous only.** Below the categories, the `FAMOUS` list picks the best-known people from each category for the **Famous only** pill. To include someone there, add their name to their category's line in `FAMOUS` (they must also be in that category's `people`). For a new category, add a line such as `cricket: ["Virat Kohli", "MS Dhoni"],`.
+
+**Good to know**
+- The person needs an English Wikipedia page with a photo. Anyone without one is quietly left out of the game.
+- If the game stops loading after an edit, a quote or comma is probably missing. GitHub's **History** button on the file lets you go back.
+- Optional, on a computer with the project: `npm run verify-decks` checks every name and lists the ones without a photo.
 
 ## Deploy to Vercel
 This is a static site, so it needs no config:

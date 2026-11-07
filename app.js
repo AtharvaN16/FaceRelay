@@ -47,7 +47,6 @@
     turns: 3,     // relay: turns per team
     chances: 1,   // relay: tries each player gets before the chain breaks
     rounds: 20,   // shout-out: number of faces
-    customNames: "",
     famousOnly: false,   // only the best-known people in each deck
     negScoring: false,   // a wrong answer costs a point and play carries on
     repeatFaces: false,  // off: faces from the last game are kept for the end of the new game's deck
@@ -60,8 +59,8 @@
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; } catch { return { ...defaults }; }
   }
   function saveSettings() {
-    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames } = S;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames })); } catch {}
+    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames } = S;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames })); } catch {}
   }
 
   // ---------- sound ----------
@@ -142,12 +141,6 @@
     return titles.map((t) => out.get(t)).filter(Boolean);
   }
 
-  // Free-text names → best Wikipedia title
-  async function searchTitle(q) {
-    const j = await wikiApi({ action: "query", list: "search", srsearch: q, srlimit: "1", srnamespace: "0" });
-    return j.query?.search?.[0]?.title || null;
-  }
-
   function preload(src) {
     return new Promise((res) => {
       const im = new Image();
@@ -162,7 +155,6 @@
   const S = {
     ...loadSettings(),
     screen: "setup",       // setup | loading | ready | show | judge | result | turnEnd | final
-    photos: [],            // own uploaded photos [{name, img}]
     queue: [], qi: 0, card: null,
     loadMsg: "", loadPct: 0, error: "",
     scores: [], clears: [],
@@ -178,7 +170,6 @@
   const GAME_KEY = "face-relay:game:v1";
   // Saved settings from older versions: cricket merged into sports; drop decks that no longer exist
   S.decks = [...new Set((S.decks || []).map((d) => (d === "cricket" ? "sports" : d)))].filter((d) => window.DECKS[d]);
-  S.addOpen = !!(S.customNames || "").trim();
   // Famous only is exclusive with the decks (older saves could have both)
   if (S.famousOnly && S.decks.length) { S.decksBeforeFamous = S.decks; S.decks = []; }
   S.teamCount = clamp(+S.teamCount || 2, 1, MAX_TEAMS);
@@ -264,18 +255,11 @@
       const titles = new Set();
       if (S.famousOnly) Object.values(window.DECKS).forEach((d) => (d.famous || []).forEach((t) => titles.add(t)));
       else S.decks.forEach((d) => window.DECKS[d]?.people.forEach((t) => titles.add(t)));
-      const custom = S.famousOnly ? [] : S.customNames.split("\n").map((s) => s.trim()).filter(Boolean);
-      if (custom.length) {
-        render();
-        const found = await Promise.all(custom.map((n) => searchTitle(n).catch(() => null)));
-        found.forEach((t) => t && titles.add(t));
-      }
       let cards = [];
       if (titles.size) {
         render();
         cards = await fetchPeople([...titles]);
       }
-      if (!S.famousOnly) cards = cards.concat(S.photos.map((p) => ({ key: "own:" + p.name, name: p.name, desc: "", img: p.img })));
       if (!cards.length) throw new Error("Pick at least one deck.");
 
       // Fresh random order every game. With "Repeat faces" off, last game's faces go to the very end
@@ -473,7 +457,7 @@
     }
   }
 
-  // Restart the current game with the same teams and settings (photos stay loaded)
+  // Restart the current game with the same teams and settings
   // Keyboard shortcuts helper
   const SHORTCUTS = [
     ["During a game", [
@@ -592,9 +576,7 @@
     const g = { savedAt: Date.now() };
     GAME_FIELDS.forEach((k) => (g[k] = S[k]));
     if (g.screen === "show") g.screen = "ready";   // a face that was on screen is re-dealt on resume
-    // Uploaded photos only live in this tab's memory, so they can't be resumed
-    g.queue = S.queue.filter((c) => !String(c.img).startsWith("blob:"));
-    if (g.card && String(g.card.img).startsWith("blob:")) { g.card = null; if (g.screen === "result") g.screen = "ready"; }
+    g.queue = S.queue;
     try { localStorage.setItem(GAME_KEY, JSON.stringify(g)); } catch {}
   }
   function loadGame() {
@@ -712,7 +694,6 @@
 
   function viewSetup() {
     const relay = S.mode === "relay";
-    const addChip = S.famousOnly ? "" : `<button class="deck add-pill ${S.addOpen ? "open" : ""}" data-act="addToggle" type="button" aria-expanded="${!!S.addOpen}">${S.addOpen ? "−" : "+"} Add</button>`;
     const famousChip = `<button class="deck ${S.famousOnly ? "on" : ""}" data-deck="famous" type="button"><span>Famous only</span><small>${famousCount()}</small></button>`;
     const deckChips = famousChip + Object.entries(window.DECKS).map(([k, d]) => `
       <button class="deck ${S.decks.includes(k) ? "on" : ""}" data-deck="${k}" type="button">
@@ -767,14 +748,7 @@
         </section>
         <section class="panel">
           <h2>Personalities</h2>
-          <div class="decks">${deckChips}${addChip}</div>
-          ${!S.famousOnly && S.addOpen ? `<div class="custom-body">
-            <label class="lbl">Names, one per line</label>
-            <textarea id="customNames" rows="3" placeholder="Sunil Grover&#10;Kapil Sharma&#10;MrBeast">${esc(S.customNames)}</textarea>
-            <label class="lbl">Photos (file name is the answer)</label>
-            <input type="file" id="photos" accept="image/*" multiple />
-            ${S.photos.length ? `<div class="thumbs">${S.photos.map((p, i) => `<figure><img src="${p.img}" alt=""><figcaption>${esc(p.name)}</figcaption><button class="x" data-delphoto="${i}" type="button">×</button></figure>`).join("")}</div>` : ""}
-          </div>` : ""}
+          <div class="decks">${deckChips}</div>
           <div class="row">
             <div><h3>Time</h3>${segs("secs", [2, 3, 5, 8], S.seconds, (v) => v + "s")}</div>
             ${relay
@@ -986,15 +960,6 @@
       ti.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } });
       ti.addEventListener("blur", () => finish(true));
     }
-    const ta = document.getElementById("customNames");
-    ta?.addEventListener("input", () => { S.customNames = ta.value; saveSettings(); });
-    document.getElementById("photos")?.addEventListener("change", (e) => {
-      [...e.target.files].forEach((f) => {
-        const name = f.name.replace(/\.[^.]+$/, "").replace(/[_-]+/g, " ").replace(/\s*\(\d+\)$/, "").trim();
-        S.photos.push({ name, img: URL.createObjectURL(f) });
-      });
-      render();
-    });
   }
 
   // ---------- events ----------
@@ -1020,7 +985,6 @@
     if (d.skips) { S.skips = +d.skips; saveSettings(); return render(); }
     if (d.chances) { S.chances = +d.chances; saveSettings(); return render(); }
     if (d.rounds) { S.rounds = +d.rounds; saveSettings(); return render(); }
-    if (d.delphoto) { URL.revokeObjectURL(S.photos[+d.delphoto].img); S.photos.splice(+d.delphoto, 1); return render(); }
     if (d.award !== undefined) return award(+d.award);
     switch (d.act) {
       case "start": return startGame();
@@ -1028,7 +992,6 @@
       case "fs": return toggleFs();
       case "tv": S.tvMode = !S.tvMode; saveSettings(); return render();
       case "keys": return openShortcuts();
-      case "addToggle": S.addOpen = !S.addOpen; render(); if (S.addOpen) document.getElementById("customNames")?.focus(); return;
       case "neg": S.negScoring = !S.negScoring; saveSettings(); return render();
       case "repeat": S.repeatFaces = !S.repeatFaces; saveSettings(); return render();
       case "restart": return restartMenu();

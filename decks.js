@@ -92,7 +92,8 @@ window.DECKS = {
       "Martin Luther King Jr.", "Abraham Lincoln", "Winston Churchill", "Napoleon", "Cleopatra",
       "Narendra Modi", "Barack Obama", "Elizabeth II", "14th Dalai Lama"
     ]
-  }
+  },
+  // ↑ Paste new categories above this line (see "Add faces or a category" in README.md)
 };
 
 // "Famous only": the best-known names in each deck (must also be in that deck's people list)
