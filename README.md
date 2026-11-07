@@ -18,7 +18,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 
 ## Setup
 - **Teams:** 1–6 teams. Click a team's colour square to change its colour. Use − / + on a team to set its players (1–8).
-- **Faces:** pick decks (Bollywood, Cricket, Hollywood, Music, Sports, Tech & Business, Leaders & Legends; about 240 people). **+ Add** takes extra names (looked up on Wikipedia) or photos; the file name is the answer.
+- **Faces:** pick decks (Bollywood & Indian Cinema, Hollywood, Music, Sports Stars, Tech & Business, Scientists, Writers & History; about 260 people). **+ Add** takes extra names (looked up on Wikipedia) or photos; the file name is the answer.
 - **Time:** 2, 3, 5 or 8 seconds per face.
 
 ## Modes

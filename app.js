@@ -39,7 +39,7 @@
     teamCount: 2,
     teamSizes: [3, 3],
     teamColors: [0, 1],
-    decks: ["bollywood", "cricket", "hollywood", "music"],
+    decks: ["bollywood", "sports", "hollywood", "music"],
     seconds: 3,
     laps: 1,
     turns: 3,     // relay: turns per team
@@ -155,6 +155,8 @@
     deadline: 0, secondsLeft: 0, lastTick: -1,
     hostConnected: false,
   };
+  // Saved settings from older versions: cricket merged into sports; drop decks that no longer exist
+  S.decks = [...new Set((S.decks || []).map((d) => (d === "cricket" ? "sports" : d)))].filter((d) => window.DECKS[d]);
   S.teamCount = clamp(+S.teamCount || 2, 1, MAX_TEAMS);
   if (!Array.isArray(S.teamSizes)) S.teamSizes = [];
   if (!Array.isArray(S.teamColors)) S.teamColors = [];
@@ -288,7 +290,7 @@
       S.screen = "ready"; return render();
     }
     if (S.screen === "result") {
-      if (S.result === "correct" && S.link < chainOrder().length - 1) { S.link++; S.misses = 0; S.screen = "ready"; return render(); }
+      if (S.result === "correct" && S.link < chainOrder().length - 1) { S.link++; S.misses = 0; S.result = null; S.screen = "ready"; return render(); }
       // Missed, but this player still has chances left: same player, new face
       if (S.result !== "correct" && S.misses < S.chances) { S.result = null; S.screen = "ready"; return render(); }
       // Turn over: either the whole chain cleared or someone missed
@@ -396,7 +398,6 @@
   const svg = (d, extra = "") => `<svg class="ic" viewBox="0 0 24 24" width="1em" height="1em" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"${extra}>${d}</svg>`;
   const IC = {
     remote: svg('<rect x="6" y="2.5" width="12" height="19" rx="3"/><path d="M11 18h2"/>'),
-    help: svg('<circle cx="12" cy="12" r="9"/><path d="M9.6 9.3a2.5 2.5 0 0 1 4.8.9c0 1.7-2.4 2.2-2.4 3.6"/><path d="M12 17.2h.01"/>'),
     expand: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
     soundOn: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
     soundOff: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 10l4 4M20 10l-4 4"/>'),
@@ -455,11 +456,11 @@
         <div class="logo"><span class="logo-mark" aria-hidden="true"><i></i><i></i></span><h1>Face Relay</h1></div>
         <div class="top-actions">
           <button class="ghost" data-act="host" type="button" title="Open a second window on your laptop that shows the answers">${IC.remote} Host remote</button>
-          <button class="ghost" data-act="howto" type="button">${IC.help} How to play</button>
           <button class="ghost" data-act="fs" type="button">${IC.expand} Fullscreen</button>
         </div>
       </header>
       ${S.error ? `<div class="err">${esc(S.error)}</div>` : ""}
+      <div class="setup-main">
       <div class="cols">
         <section class="panel">
           <h2>Mode</h2>
@@ -499,31 +500,10 @@
         </section>
       </div>
       <footer class="startbar">
-        <button class="big go" data-act="start" type="button">Start</button>
+        <button class="big go start-btn" data-act="start" type="button">Start</button>
       </footer>
-      ${howtoDialog()}
+      </div>
     </main>`;
-  }
-
-  function howtoDialog() {
-    return `<dialog id="howto">
-      <h2>How to play</h2>
-      <h3>Relay Chain</h3>
-      <ol>
-        <li>Teams take turns. Players answer in order, ${S.seconds}s per face.</li>
-        <li>Correct: +1. Wrong or timeout uses a chance. Out of chances ends the turn.</li>
-        <li>Whole team correct: +${CHAIN_BONUS} bonus.</li>
-        <li>Host: <kbd>Space</kbd> correct / next, <kbd>←</kbd> wrong.</li>
-      </ol>
-      <h3>Shout-Out Battle</h3>
-      <ol>
-        <li>First team to shout the name scores.</li>
-        <li>Host: <kbd>1</kbd>–<kbd>${S.teamCount}</kbd> award, <kbd>0</kbd> nobody.</li>
-      </ol>
-      <h3>Keys</h3>
-      <p>${keyHint("R", "restart")} ${keyHint("F", "fullscreen")} ${keyHint("M", "mute")} ${keyHint("Esc", "menu")}</p>
-      <form method="dialog"><button class="big go">Close</button></form>
-    </dialog>`;
   }
 
   function viewLoading() {
@@ -688,7 +668,6 @@
     switch (d.act) {
       case "start": return startGame();
       case "primary": return primary();
-            case "howto": return document.getElementById("howto")?.showModal();
       case "fs": return toggleFs();
       case "restart": return restart();
       case "mute": S.muted = !S.muted; saveSettings(); return render();
@@ -737,10 +716,13 @@
       answer: S.card && ["show", "judge", "result"].includes(S.screen) ? { name: S.card.name, desc: S.card.desc, img: S.card.img } : null,
       // Pre-announce the next face so the host knows it before it's shown
       upcoming: S.screen === "ready" && S.queue.length ? (() => { const c = S.queue[S.qi % S.queue.length]; return { name: c.name, desc: c.desc, img: c.img }; })() : null,
+      current: relay && S.scores.length && !["setup", "loading", "final"].includes(S.screen) ? {
+        team: S.team, player: `P${(chainOrder()[S.link] ?? 0) + 1}`, chances: S.chances, misses: Math.min(S.misses, S.chances),
+        turn: Math.min(S.turnNo, S.turns), turns: S.turns, link: S.link, chain: chainOrder().length } : null,
       status: S.screen === "setup" ? "In the menu"
         : relay ? `${teamName(S.team)} · ${playerLabel(chainOrder()[S.link] ?? 0)}${S.chances > 1 ? ` (chance ${Math.min(S.misses + 1, S.chances)}/${S.chances})` : ""} · turn ${Math.min(S.turnNo, S.turns)}/${S.turns}`
         : `Face ${S.round}/${S.rounds}`,
-      teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
+      teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s, cur: relay && t === S.team })),
       deadline: S.screen === "show" ? Date.now() + (S.deadline - performance.now()) : 0,
     });
   }
@@ -770,16 +752,19 @@
       const relay = st.mode === "relay";
       let btns = "";
       if (st.screen === "ready") btns = `<button class="big go" data-h="primary">Show</button>`;
-      else if (st.screen === "show" && relay) btns = `<button class="big go" data-h="primary">Correct</button>`;
+      else if (st.screen === "show" && relay) btns = `<div class="hrow"><button class="big bad" data-h="wrong">Wrong</button><button class="big good" data-h="primary">Correct</button></div>`;
       else if (st.screen === "show") btns = `<div class="hgrid">${st.teams.map((t, i) => `<button class="big" style="background:${t.color};color:#fff" data-h="award" data-arg="${i}">${esc(t.name)}</button>`).join("")}<button class="big bad" data-h="award" data-arg="-1">Nobody</button></div>`;
       else if (st.screen === "result" || st.screen === "turnEnd") btns = `<button class="big go" data-h="primary">Continue</button>`;
       else if (st.screen === "final") btns = `<button class="big go" data-h="primary">Menu</button>`;
       $app.innerHTML = `<main class="host">
-        <p class="eyebrow">${esc(st.status)}</p>
+        ${st.current ? `<div class="hnow" style="--c:${st.teams[st.current.team].color}"><span class="hteam"><i class="dot"></i>${esc(st.teams[st.current.team].name)}</span>
+          <span class="hplayer">${st.current.player}<small>${st.current.link + 1}/${st.current.chain}</small></span>
+          ${st.current.chances > 1 ? `<span class="hpips">${Array.from({ length: st.current.chances }, (_, k) => `<i class="${k < st.current.misses ? "used" : ""}"></i>`).join("")}</span>` : ""}
+          <span class="hturn">Turn ${st.current.turn}/${st.current.turns}</span></div>` : `<p class="eyebrow">${esc(st.status)}</p>`}
         ${a ? `<div class="hans ${st.answer ? "" : "next"}"><img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer" /><div><small>${st.answer ? "Now" : "Next"}</small><b>${esc(a.name)}</b><em>${esc(a.desc)}</em></div></div>` : ""}
         ${st.screen === "show" ? `<div class="htimer" id="htimer"></div>` : ""}
         <div class="hbtns">${btns}</div>
-        ${st.teams?.length && st.screen !== "setup" ? `<ul class="hscores">${st.teams.map((t) => `<li><span><i class="dot" style="--c:${t.color}"></i> ${esc(t.name)}</span><b>${t.score}</b></li>`).join("")}</ul>` : ""}
+        ${st.teams?.length && st.screen !== "setup" ? `<ul class="hscores">${st.teams.map((t) => `<li class="${t.cur ? "cur" : ""}" style="--c:${t.color}"><span><i class="dot"></i> ${esc(t.name)}</span><b>${t.score}</b></li>`).join("")}</ul>` : ""}
       </main>`;
     };
     channel.onmessage = (ev) => { if (ev.data?.type === "state") { st = ev.data; paint(); } };

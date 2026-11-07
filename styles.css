@@ -23,6 +23,7 @@
   --good: #22c472;
   --bad: #ef4444;
   --warn: #f2792a;
+  --start: #ff7a1a;           /* primary call to action */
   --star: #f5c542;
   --r-xl: 28px;
   --r-lg: 20px;
@@ -203,7 +204,7 @@ dialog form { text-align: center; margin-top: 18px; }
   padding: 0.3em 0.85em; border-radius: 999px; font-weight: 500; font-size: clamp(12px, 1.5vmin, 20px);
   background: var(--chip); color: var(--mute); transition: all 0.2s;
 }
-.link.now { background: var(--c); color: #fff; }
+.link.now { background: var(--c); color: #0d0d0f; }
 .link.done { background: color-mix(in srgb, var(--c) 20%, var(--bg)); color: color-mix(in srgb, var(--c) 72%, #fff); }
 .link.done > span:first-child::before { content: "✓ "; }
 .link.fail { background: color-mix(in srgb, var(--bad) 20%, var(--bg)); color: color-mix(in srgb, var(--bad) 72%, #fff); }
@@ -221,23 +222,22 @@ dialog form { text-align: center; margin-top: 18px; }
 .turnend .who { font-size: clamp(48px, 11vmin, 160px); }
 .sub { margin: 0; color: var(--mute); font-size: clamp(16px, 2.4vmin, 32px); }
 .sub b { color: var(--ink); font-weight: 500; }
-@keyframes rise { from { transform: translateY(12px); opacity: 0; } }
+@keyframes rise { from { opacity: 0; } }
 
 /* photo: gray card, generous radius, no tilt */
 .showwrap { display: flex; flex-direction: column; align-items: center; gap: 2.4vmin; min-height: 0; flex: 1; justify-content: center; width: 100%; }
 .photo { margin: 0; display: flex; flex-direction: column; align-items: center; min-height: 0; gap: 2.4vmin; }
 .frame {
   display: flex; padding: 1vmin; background: var(--surface); border-radius: clamp(20px, 3vmin, 40px);
-  transition: box-shadow 0.2s; animation: rise 0.35s cubic-bezier(.2, .8, .2, 1);
+  transition: box-shadow 0.2s; animation: rise 0.25s ease-out;
 }
 .frame img {
   height: 62vh; width: auto; min-width: 30vh; max-width: 80vw; object-fit: cover;
   border-radius: clamp(14px, 2.2vmin, 30px); display: block; background: var(--surface-2);
 }
 .s-show .frame img { height: 76vh; }
-.photo.good .frame { box-shadow: 0 0 0 0.5vmin var(--good); }
-.photo.bad .frame { box-shadow: 0 0 0 0.5vmin var(--bad); animation: shake 0.35s; }
-@keyframes shake { 25% { transform: translateX(-1vmin); } 75% { transform: translateX(1vmin); } }
+.photo.good .frame { box-shadow: inset 0 0 0 0.6vmin var(--good); }
+.photo.bad .frame { box-shadow: inset 0 0 0 0.6vmin var(--bad); }
 figcaption { text-align: center; font-size: clamp(28px, 5.2vmin, 76px); line-height: 1.05; }
 figcaption.on { animation: rise 0.3s cubic-bezier(.2, .8, .2, 1); }
 figcaption b { display: block; font-weight: 500; letter-spacing: -0.035em; }
@@ -266,10 +266,10 @@ figcaption small { display: block; font-size: 0.32em; color: var(--mute); margin
 .score kbd { margin: 0; font-size: 0.68em; }
 .score .dot { width: 0.55em; height: 0.55em; }
 .score b { font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; min-width: 1ch; text-align: right; }
-.score.cur { background: color-mix(in srgb, var(--c) 20%, var(--bg)); color: color-mix(in srgb, var(--c) 72%, #fff); box-shadow: inset 0 0 0 1.5px var(--c); }
-.score.hit { background: var(--c); color: #fff; }
-.score.hit b { color: #fff; }
-.score.hit .dot { background: #fff; }
+.score.cur { background: color-mix(in srgb, var(--c) 20%, var(--bg)); color: color-mix(in srgb, var(--c) 72%, #fff); }
+.score.hit { background: var(--c); color: #0d0d0f; }
+.score.hit b { color: #0d0d0f; }
+.score.hit .dot { background: #0d0d0f; }
 .score.lead .sn::after { content: " ★"; color: var(--star); }
 
 .keys { display: flex; align-items: center; gap: 8px; padding: 1vmin 0 1.6vmin; color: var(--mute); font-size: 13px; flex-wrap: wrap; }
@@ -409,3 +409,25 @@ dialog.confirm p { margin: 0 0 22px; font-size: 20px; font-weight: 500; color: v
 .custom-body { margin-top: 10px; padding: 4px 16px 14px; border-radius: var(--r-lg); background: var(--card); box-shadow: 0 0 0 1px var(--line); }
 
 .swatch { width: 18px; height: 18px; border-radius: 6px; }
+
+/* menu: header on top, panels + Start centred vertically in the remaining space */
+.setup { min-height: 100vh; display: flex; flex-direction: column; padding-bottom: 24px; }
+.setup .cols { width: 100%; }
+.setup-main { flex: 1; display: flex; flex-direction: column; justify-content: center; gap: 36px; }
+.startbar { position: static; background: none; padding: 0; }
+.big.start-btn {
+  width: min(440px, 100%); padding: 18px 28px; font-size: 20px; font-weight: 600; letter-spacing: -0.01em;
+  background: var(--start); color: #1a0b00;
+}
+.big.start-btn:hover { background: color-mix(in srgb, var(--start) 88%, #fff); }
+
+/* host remote: current team / player header + highlighted scoreboard */
+.hnow { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; padding: 12px 14px; border-radius: var(--r-lg); background: color-mix(in srgb, var(--c) 16%, var(--bg)); box-shadow: inset 0 0 0 1.5px var(--c); }
+.hteam { display: inline-flex; align-items: center; gap: 8px; font-weight: 500; }
+.hplayer { font-size: 28px; font-weight: 600; letter-spacing: -0.03em; color: color-mix(in srgb, var(--c) 72%, #fff); display: inline-flex; align-items: baseline; gap: 6px; }
+.hplayer small { font-size: 12px; font-weight: 400; color: var(--mute); letter-spacing: 0; }
+.hpips { display: inline-flex; gap: 4px; }
+.hpips i { width: 8px; height: 8px; border-radius: 50%; background: var(--c); }
+.hpips i.used { opacity: 0.3; }
+.hturn { margin-left: auto; color: var(--mute); font-size: 13px; }
+.hscores li.cur { background: color-mix(in srgb, var(--c) 16%, var(--surface)); }

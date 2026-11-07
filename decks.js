@@ -9,23 +9,13 @@ window.DECKS = {
       "Priyanka Chopra", "Alia Bhatt", "Ranbir Kapoor", "Ranveer Singh", "Katrina Kaif",
       "Hrithik Roshan", "Akshay Kumar", "Kareena Kapoor", "Aishwarya Rai Bachchan", "Madhuri Dixit",
       "Shahid Kapoor", "Varun Dhawan", "Vicky Kaushal", "Sonam Kapoor", "Anushka Sharma",
-      "Ajay Devgn", "Kajol", "Rajinikanth", "Prabhas", "Allu Arjun",
-      "Nawazuddin Siddiqui", "Pankaj Tripathi", "Ayushmann Khurrana", "Rajkummar Rao", "Taapsee Pannu",
-      "Sridevi", "Rekha", "Dharmendra", "Kartik Aaryan", "Shraddha Kapoor",
-      "Tiger Shroff", "Sanjay Dutt", "Kamal Haasan", "Vijay (actor)", "Samantha Ruth Prabhu"
-    ]
-  },
-  cricket: {
-    label: "Cricket Legends",
-    emoji: "🏏",
-    people: [
-      "Sachin Tendulkar", "Virat Kohli", "MS Dhoni", "Rohit Sharma", "Jasprit Bumrah",
-      "Hardik Pandya", "Ravindra Jadeja", "Rahul Dravid", "Sourav Ganguly", "Kapil Dev",
-      "Yuvraj Singh", "Virender Sehwag", "Anil Kumble", "Shubman Gill", "Rishabh Pant",
-      "KL Rahul", "Suryakumar Yadav", "Smriti Mandhana", "Mithali Raj", "Harbhajan Singh",
-      "Zaheer Khan", "Ricky Ponting", "Shane Warne", "Brian Lara", "AB de Villiers",
-      "Chris Gayle", "Ben Stokes", "Joe Root", "Babar Azam", "Pat Cummins",
-      "Steve Smith (cricketer)", "Kane Williamson", "Muttiah Muralitharan", "Wasim Akram", "Glenn Maxwell"
+      "Ajay Devgn", "Kajol", "Nawazuddin Siddiqui", "Pankaj Tripathi", "Ayushmann Khurrana",
+      "Rajkummar Rao", "Taapsee Pannu", "Sridevi", "Rekha", "Dharmendra",
+      "Kartik Aaryan", "Shraddha Kapoor", "Tiger Shroff", "Sanjay Dutt",
+      "Rajinikanth", "Kamal Haasan", "Vijay (actor)", "Prabhas", "Allu Arjun",
+      "Mahesh Babu", "Ram Charan", "N. T. Rama Rao Jr.", "Dulquer Salmaan", "Dhanush",
+      "Suriya", "Chiranjeevi", "Mohanlal", "Mammootty", "Nayanthara",
+      "Samantha Ruth Prabhu", "Rashmika Mandanna"
     ]
   },
   hollywood: {
@@ -55,16 +45,25 @@ window.DECKS = {
     ]
   },
   sports: {
-    label: "Sports Icons",
+    label: "Sports Stars",
     emoji: "⚽",
     people: [
       "Lionel Messi", "Cristiano Ronaldo", "Neymar", "Kylian Mbappé", "Erling Haaland",
-      "Roger Federer", "Rafael Nadal", "Novak Djokovic", "Serena Williams", "Usain Bolt",
-      "Michael Jordan", "LeBron James", "Stephen Curry", "Lewis Hamilton", "Max Verstappen",
-      "Tiger Woods", "Muhammad Ali", "Mike Tyson", "Conor McGregor", "Neeraj Chopra",
-      "P. V. Sindhu", "Sunil Chhetri", "Mary Kom", "Simone Biles", "Michael Phelps",
-      "David Beckham", "Zinedine Zidane", "Diego Maradona", "Pelé", "Abhinav Bindra",
-      "Saina Nehwal", "Mohamed Salah"
+      "Mohamed Salah", "Vinícius Júnior", "Jude Bellingham", "Kevin De Bruyne", "Robert Lewandowski",
+      "Luka Modrić", "Harry Kane", "Lamine Yamal", "Zlatan Ibrahimović", "Ronaldinho",
+      "Zinedine Zidane", "David Beckham", "Pelé", "Diego Maradona", "Wayne Rooney",
+      "Andrés Iniesta", "Sunil Chhetri",
+      "Lewis Hamilton", "Max Verstappen", "Charles Leclerc", "Lando Norris", "Fernando Alonso",
+      "Sebastian Vettel", "Michael Schumacher", "Oscar Piastri",
+      "Roger Federer", "Rafael Nadal", "Novak Djokovic", "Serena Williams", "Carlos Alcaraz",
+      "Jannik Sinner", "Venus Williams", "Naomi Osaka", "Maria Sharapova", "Sania Mirza",
+      "Michael Jordan", "LeBron James", "Stephen Curry", "Kobe Bryant", "Giannis Antetokounmpo",
+      "Tom Brady", "Tiger Woods", "Rory McIlroy", "Muhammad Ali", "Mike Tyson",
+      "Floyd Mayweather Jr.", "Conor McGregor", "Usain Bolt", "Eliud Kipchoge", "Simone Biles",
+      "Michael Phelps", "Neeraj Chopra", "P. V. Sindhu", "Mary Kom", "Abhinav Bindra",
+      "Saina Nehwal", "Manu Bhaker",
+      "Sachin Tendulkar", "Virat Kohli", "MS Dhoni", "Rohit Sharma", "Jasprit Bumrah",
+      "Hardik Pandya", "Ben Stokes", "Shane Warne", "Ricky Ponting"
     ]
   },
   tech: {
@@ -80,16 +79,18 @@ window.DECKS = {
     ]
   },
   history: {
-    label: "Leaders & Legends",
+    label: "Scientists, Writers & History",
     emoji: "🏛️",
     people: [
-      "Narendra Modi", "Mahatma Gandhi", "Jawaharlal Nehru", "B. R. Ambedkar", "Indira Gandhi",
-      "A. P. J. Abdul Kalam", "Barack Obama", "Donald Trump", "Joe Biden", "Vladimir Putin",
-      "Xi Jinping", "Elizabeth II", "Charles III", "Winston Churchill", "Abraham Lincoln",
-      "Nelson Mandela", "Martin Luther King Jr.", "Albert Einstein", "Mother Teresa", "14th Dalai Lama",
-      "Pope Francis", "Angela Merkel", "Emmanuel Macron", "Justin Trudeau", "Rishi Sunak",
-      "Kamala Harris", "Volodymyr Zelenskyy", "Bhagat Singh", "Subhas Chandra Bose", "Swami Vivekananda",
-      "Marie Curie", "Isaac Newton", "Stephen Hawking", "Nikola Tesla", "Frida Kahlo"
+      "Albert Einstein", "Isaac Newton", "Marie Curie", "Nikola Tesla", "Stephen Hawking",
+      "Charles Darwin", "Galileo Galilei", "Leonardo da Vinci", "Srinivasa Ramanujan", "C. V. Raman",
+      "Thomas Edison", "Alan Turing", "Pablo Picasso", "Frida Kahlo",
+      "William Shakespeare", "Rabindranath Tagore", "Mark Twain", "Charles Dickens", "J. K. Rowling",
+      "George Orwell", "Ernest Hemingway", "Maya Angelou",
+      "Mahatma Gandhi", "Jawaharlal Nehru", "B. R. Ambedkar", "Indira Gandhi", "A. P. J. Abdul Kalam",
+      "Bhagat Singh", "Subhas Chandra Bose", "Swami Vivekananda", "Mother Teresa", "Nelson Mandela",
+      "Martin Luther King Jr.", "Abraham Lincoln", "Winston Churchill", "Napoleon", "Cleopatra",
+      "Narendra Modi", "Barack Obama", "Elizabeth II", "14th Dalai Lama"
     ]
   }
 };
