@@ -33,12 +33,13 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Keys
 | Key | Action |
 | --- | --- |
-| `Space` | Next |
-| `←` | Wrong |
+| `Space` | Next. With no phone connected, Space first reveals the name to the room, then Space again = right |
+| `⌘` (Mac) / `Ctrl` (Windows) | Wrong, after the name is revealed (tap it on its own) |
+| `]` / `[` | Right / wrong |
 | `1`–`6` / `0` | Award a team / nobody (Shout-Out) |
 | `P` | Pause (hides the face, freezes the clock) |
 | `S` | Skip face (new face, no penalty) |
-| `U` | Undo the last call |
+| `U` | Undo the last call: the score goes back and the same player gets a new face (no penalty) |
 | `T` | TV mode (higher contrast) |
 | `R` | Restart |
 | `F` | Fullscreen |

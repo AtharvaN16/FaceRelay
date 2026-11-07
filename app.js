@@ -12,7 +12,6 @@
   const $app = document.getElementById("app");
   const STORE_KEY = "face-relay:settings:v2";
   const CACHE_KEY = "face-relay:wiki:v2";   // v2: non-photo images filtered out
-  const SEEN_KEY = "face-relay:seen:v1";
 
   // ---------- helpers ----------
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -32,7 +31,8 @@
   const CHAIN_BONUS = 3;
   // Each team picks a palette entry (S.teamColors[t] = index into TEAMS)
   const teamPal = (t) => TEAMS[(S.teamColors && S.teamColors[t]) ?? t] || TEAMS[t % TEAMS.length];
-  const teamName = (t) => `${teamPal(t).name} Team`;
+  // A custom name (double-click it in the menu) or the colour's default, e.g. "Blue Team"
+  const teamName = (t) => (S.teamNames && S.teamNames[t]) || `${teamPal(t).name} Team`;
   const teamColor = (t) => teamPal(t).color;
   const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 
@@ -50,6 +50,7 @@
     customNames: "",
     famousOnly: false,   // only the best-known people in each deck
     negScoring: false,   // a wrong answer costs a point and play carries on
+    repeatFaces: false,  // off: faces from the last game are kept for the end of the new game's deck
     skips: -1,           // skips per turn (relay) / per game (shout); -1 = unlimited
     muted: false,
     tvMode: false,  // higher-contrast look for TVs
@@ -59,8 +60,8 @@
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; } catch { return { ...defaults }; }
   }
   function saveSettings() {
-    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips } = S;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips })); } catch {}
+    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames } = S;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, customNames, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames })); } catch {}
   }
 
   // ---------- sound ----------
@@ -170,7 +171,7 @@
     // shout
     round: 0, awarded: null,
     deadline: 0, secondsLeft: 0, lastTick: -1,
-    paused: false, pauseLeft: 0, undone: false,   // pause / undo
+    paused: false, pauseLeft: 0, revealed: false,   // pause / reveal (no phone)
     skipping: false, skipAt: 0,                   // 0.5s break after Skip before the next face
     undoStack: [],
   };
@@ -185,10 +186,22 @@
   if (!Array.isArray(S.teamColors)) S.teamColors = [];
   S.colorPick = null;   // team whose color picker is open
   syncTeams();
+  // − on a team with one player left removes that team (as long as another team remains)
+  function changeTeamSize(i, d) {
+    if (S.teamSizes[i] == null) return;
+    if (d < 0 && S.teamSizes[i] <= 1) {
+      if (S.teamCount <= 1) return;
+      S.teamSizes.splice(i, 1); S.teamColors.splice(i, 1); S.teamNames.splice(i, 1); S.teamCount--; S.colorPick = null; syncTeams();
+      return;
+    }
+    S.teamSizes[i] = clamp(S.teamSizes[i] + d, 1, MAX_PER_TEAM);
+  }
   // Keep one size per team: new teams copy the last team's size
   function syncTeams() {
     const last = S.teamSizes.length ? S.teamSizes[S.teamSizes.length - 1] : 3;
     S.teamSizes = Array.from({ length: S.teamCount }, (_, t) => clamp(+S.teamSizes[t] || last, 1, MAX_PER_TEAM));
+    if (!Array.isArray(S.teamNames)) S.teamNames = [];
+    S.teamNames = Array.from({ length: S.teamCount }, (_, t) => (typeof S.teamNames[t] === "string" ? S.teamNames[t] : ""));
     // Colors: keep existing picks, no duplicates, fill new teams with the first unused color
     const used = new Set();
     S.teamColors = Array.from({ length: S.teamCount }, (_, t) => {
@@ -227,24 +240,17 @@
   }
   const playerLabel = (i) => `Player ${i + 1}`;
 
+  // Faces shown in the current game, so the next game can leave them out ("Repeat faces" off)
+  const LAST_GAME_KEY = "face-relay:last-game:v1";
+  const lastGameFaces = () => { try { return new Set(JSON.parse(localStorage.getItem(LAST_GAME_KEY) || "[]")); } catch { return new Set(); } };
+  function rememberFace(key) {
+    try { const a = [...lastGameFaces()]; if (!a.includes(key)) { a.push(key); localStorage.setItem(LAST_GAME_KEY, JSON.stringify(a)); } } catch {}
+  }
+
   function nextCard() {
     S.card = S.queue[S.qi++];
     if (S.qi >= S.queue.length) { S.queue = shuffle(S.queue); S.qi = 0; }
-    markSeen(S.card.key);
-  }
-  function markSeen(key) {
-    try {
-      const seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]").filter((k) => k !== key);
-      seen.push(key); localStorage.setItem(SEEN_KEY, JSON.stringify(seen.slice(-300)));
-    } catch {}
-  }
-  function orderBySeen(cards) {
-    let seen = [];
-    try { seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "[]"); } catch {}
-    const rank = new Map(seen.map((k, i) => [k, i]));
-    const fresh = shuffle(cards.filter((c) => !rank.has(c.key)));
-    const old = cards.filter((c) => rank.has(c.key)).sort((a, b) => rank.get(a.key) - rank.get(b.key));
-    return fresh.concat(old);
+    rememberFace(S.card.key);
   }
 
   // ---------- game flow ----------
@@ -272,7 +278,11 @@
       if (!S.famousOnly) cards = cards.concat(S.photos.map((p) => ({ key: "own:" + p.name, name: p.name, desc: "", img: p.img })));
       if (!cards.length) throw new Error("Pick at least one deck.");
 
-      cards = orderBySeen(cards);
+      // Fresh random order every game. With "Repeat faces" off, last game's faces go to the very end
+      // (only reached if the deck runs out), each part shuffled on its own.
+      const last = S.repeatFaces ? new Set() : lastGameFaces();
+      cards = shuffle(cards.filter((c) => !last.has(c.key))).concat(shuffle(cards.filter((c) => last.has(c.key))));
+      try { localStorage.removeItem(LAST_GAME_KEY); } catch {}   // this game starts its own list
       // Preload the first batch before starting, the rest in the background.
       const first = Math.min(cards.length, 12);
       let done = 0;
@@ -289,14 +299,14 @@
     S.scores = Array(S.teamCount).fill(0);
     S.clears = Array(S.teamCount).fill(0);
     S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
-    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false;
+    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.revealed = false;
     S.screen = "ready"; render();
   }
 
   function go() {
     if (S.mode === "shout") S.round++;
     nextCard();
-    S.result = null; S.awarded = null; S.paused = false; S.undone = false; S.skipping = false;
+    S.result = null; S.awarded = null; S.paused = false; S.revealed = false; S.skipping = false;
     S.deadline = performance.now() + S.seconds * 1000;
     S.lastTick = -1;
     S.screen = "show"; sfx.go(); render();
@@ -307,35 +317,37 @@
   function newTurn(relayOnly = false) {
     if (relayOnly && S.mode !== "relay") return;
     S.turnMisses = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
+    // Where this team stood when the turn began, so "Restart chain" can put it back
+    S.turnStart = { score: S.scores?.[S.team] ?? 0, clears: S.clears?.[S.team] ?? 0 };
   }
   const timeLeft = () => Math.max(0, S.paused ? S.pauseLeft : (S.deadline - performance.now()) / 1000);
 
-  // ---- Undo: remember the game right before every call (correct / wrong / timeout / award)
+  // ---- Undo: take back the last call and give the same player (or round) a fresh face.
+  // The old face's name has been seen, so it is never shown again. No penalty, no skip used.
   function snapshot() {
-    S.undoStack.push({
+    S.undoStack = [{
       scores: S.scores.slice(), clears: S.clears.slice(), team: S.team, turnNo: S.turnNo, link: S.link,
-      run: S.run, misses: S.misses, round: S.round, card: S.card, left: timeLeft(),
-      turnMisses: S.turnMisses, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
-    });
-    if (S.undoStack.length > 30) S.undoStack.shift();
+      run: S.run, misses: S.misses, round: S.round, turnMisses: S.turnMisses, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
+    }];
   }
   function undo() {
-    if (!["show", "result", "turnEnd", "ready", "final"].includes(S.screen)) return;
+    if (S.screen !== "result" || inputLocked()) return;
     const u = S.undoStack.pop();
-    if (!u) return toast("Nothing to undo");
+    if (!u) return;
+    clearTimeout(autoTimer);
     document.getElementById("confetti").innerHTML = "";
     Object.assign(S, { scores: u.scores, clears: u.clears, team: u.team, turnNo: u.turnNo, link: u.link,
-      run: u.run, misses: u.misses, round: u.round, card: u.card, turnMisses: u.turnMisses, marks: u.marks, skipsLeft: u.skipsLeft });
-    // Back on the same face with the clock frozen, ready to be judged again
-    S.result = null; S.awarded = null; S.cleared = false;
-    S.screen = "show"; S.paused = true; S.pauseLeft = u.left; S.undone = true;
-    render();
+      run: u.run, misses: u.misses, round: u.round, turnMisses: u.turnMisses, marks: u.marks, skipsLeft: u.skipsLeft });
+    S.result = null; S.awarded = null; S.cleared = false; S.paused = false; S.revealed = false; S.skipping = false;
+    nextCard();
+    S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
+    S.screen = "show"; sfx.go(); render();
   }
 
   // ---- Pause: freezes the clock and hides the face (no peeking while paused)
   function togglePause() {
-    if (S.screen !== "show" || S.skipping) return;
-    if (S.paused) { S.deadline = performance.now() + S.pauseLeft * 1000; S.paused = false; S.undone = false; }
+    if (S.screen !== "show" || S.skipping || S.revealed) return;
+    if (S.paused) { S.deadline = performance.now() + S.pauseLeft * 1000; S.paused = false; S.revealed = false; }
     else { S.pauseLeft = timeLeft(); S.paused = true; }
     render();
   }
@@ -343,10 +355,10 @@
   // ---- Skip: hide the face, give everyone a second to reorient, then deal a new face with full time (no penalty)
   const SKIP_DELAY_MS = 500;
   function skip() {
-    if (S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
+    if (S.screen !== "show" || (S.paused && !S.revealed) || S.skipping) return;
     if (!(S.skipsLeft > 0)) return toast("No skips left");
     S.skipsLeft--;
-    S.paused = false; S.undone = false;
+    S.paused = false; S.revealed = false;
     S.skipping = true; S.skipAt = performance.now() + SKIP_DELAY_MS;
     render();
   }
@@ -357,13 +369,25 @@
     sfx.go(); render();
   }
 
+  // ---- Reveal (no phone connected): nobody holds the answer, so Space shows the name to the whole room,
+  // freezes the clock, and the host judges with [ (wrong) or ] (right)
+  const solo = () => !phoneConns.size;
+  let revealedAt = 0;   // a quick double-tap of Space shouldn't reveal and score in one go
+  const IS_MAC = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent);
+  const WRONG_KEY = IS_MAC ? "⌘" : "Ctrl";
+  function reveal() {
+    if (S.screen !== "show" || S.skipping || S.revealed || inputLocked()) return;
+    S.pauseLeft = timeLeft(); S.paused = true; S.revealed = true; revealedAt = performance.now();
+    render();
+  }
+
   function stopClock() { S.secondsLeft = timeLeft(); }
 
   // Relay judging
   function judge(correct) {
     if (S.mode !== "relay" || inputLocked()) return;
-    if (S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
-    stopClock(); snapshot(); S.paused = false; S.undone = false;
+    if (S.screen !== "show" || (S.paused && !S.revealed) || S.skipping) return;
+    stopClock(); snapshot(); S.paused = false; S.revealed = false;
     S.result = correct ? "correct" : "wrong";
     if (correct) { S.scores[S.team]++; S.run++; sfx.correct(); }
     else { S.misses++; S.turnMisses++; if (S.negScoring) S.scores[S.team]--; sfx.wrong(); }
@@ -419,8 +443,8 @@
 
   // Shout-out: award a team
   function award(t) {
-    if (S.mode !== "shout" || S.screen !== "show" || (S.paused && !S.undone) || S.skipping || inputLocked()) return;
-    stopClock(); snapshot(); S.paused = false; S.undone = false;
+    if (S.mode !== "shout" || S.screen !== "show" || (S.paused && !S.revealed) || S.skipping || inputLocked()) return;
+    stopClock(); snapshot(); S.paused = false; S.revealed = false;
     if (t >= 0 && t < S.teamCount) { S.scores[t]++; S.awarded = t; sfx.correct(); }
     else { S.awarded = -1; sfx.wrong(); }
     S.screen = "result"; render();
@@ -428,7 +452,7 @@
 
   // Shout-Out with negative scoring: a team shouted a wrong name → −1, face stays up for the others
   function penalize(t) {
-    if (S.mode !== "shout" || !S.negScoring || S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
+    if (S.mode !== "shout" || !S.negScoring || S.screen !== "show" || (S.paused && !S.revealed) || S.skipping) return;
     if (!(t >= 0 && t < S.teamCount)) return;
     snapshot(); S.scores[t]--; sfx.wrong(); render();
   }
@@ -440,7 +464,9 @@
       case "ready": return go();
       case "show":
         if (S.skipping) return;
-        if (S.paused && !S.undone) return togglePause();   // Space resumes a paused face
+        if (S.paused && !S.revealed) return togglePause();   // Space resumes a paused face
+        // No phone: Space reveals the name, then Space again = right (Relay); ⌘ / Ctrl = wrong
+        if (solo()) { if (!S.revealed) return reveal(); if (S.mode === "relay" && performance.now() - revealedAt > 400) judge(true); return; }
         if (S.mode === "relay") judge(true); else award(-1); return;
       case "result": case "turnEnd": return advance();
       case "final": return toMenu();
@@ -451,11 +477,13 @@
   // Keyboard shortcuts helper
   const SHORTCUTS = [
     ["During a game", [
-      [["Space"], "Next"],
-      [["←"], "Wrong answer"],
+      [["Space"], "Next. With no phone: reveal the name, then Space again = right"],
+      [[WRONG_KEY], "Wrong answer (after the reveal)"],
+      [["]"], "Right answer"],
+      [["["], "Wrong answer"],
       [["P"], "Pause / resume"],
       [["S"], "Skip face"],
-      [["U"], "Undo the last call (on the result screen)"],
+      [["U"], "Undo the last call: new face, no penalty"],
       [["1", "–", "6"], "Shout-Out: award a team"],
       [["⇧", "1", "–", "6"], "Shout-Out: −1 to a team (negative scoring)"],
       [["0"], "Shout-Out: nobody got it"],
@@ -498,13 +526,59 @@
     });
   }
 
+  // A modal with several choices (stacked); resolves with the chosen value, or null on Cancel / Esc
+  function choose(message, options) {
+    document.querySelector("dialog.confirm")?.remove();
+    return new Promise((resolve) => {
+      const d = document.createElement("dialog");
+      d.className = "confirm choose";
+      d.innerHTML = `<button class="r-close" type="button" aria-label="Close">${IC.close}</button>
+        <p>${esc(message)}</p><form method="dialog" class="confirm-actions stack">
+        ${options.map((o, i) => `<button class="big ${o.cls || "neutral"}" value="${o.value}" ${i === 0 ? "autofocus" : ""}>${esc(o.label)}</button>`).join("")}</form>`;
+      d.addEventListener("click", (e) => { if (e.target === d || e.target.closest(".r-close")) d.close(""); });
+      d.addEventListener("close", () => { resolve(d.returnValue || null); d.remove(); });
+      document.body.appendChild(d);
+      d.showModal();
+    });
+  }
+
+  // Restart button / R: in Relay (mid-game) choose between the current team's chain and the whole game
+  async function restartMenu() {
+    if (!["ready", "show", "result", "turnEnd", "final"].includes(S.screen)) return;
+    if (S.mode !== "relay" || S.screen === "final") return restart();
+    const wasRunning = S.screen === "show" && !S.paused && !S.skipping;
+    if (wasRunning) togglePause();   // freeze the clock (and hide the face) while the modal is open
+    const pick = await choose("Restart", [
+      { value: "chain", label: `Restart ${teamName(S.team)}'s chain` },
+      { value: "game", label: "Restart the game", cls: "go" },
+    ]);
+    if (pick === "chain") return restartChain();
+    if (pick === "game") return restart(true);
+    if (wasRunning && S.screen === "show" && S.paused) togglePause();
+  }
+
+  // Start the current team's turn over: their chain goes back to P1 and this turn's points are taken back
+  function restartChain() {
+    if (S.mode !== "relay" || !["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
+    clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = "";
+    const t = S.turnStart;
+    if (t) { S.scores[S.team] = t.score; S.clears[S.team] = t.clears; }
+    else {   // older save without turnStart: take back what this turn added
+      S.scores[S.team] -= S.run - (S.negScoring ? S.turnMisses || 0 : 0) + (S.cleared ? CHAIN_BONUS : 0);
+      if (S.cleared) S.clears[S.team]--;
+    }
+    S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
+    S.undoStack = []; S.paused = false; S.revealed = false; S.skipping = false; S.screen = "ready";
+    toast(`${teamName(S.team)}'s chain restarted`); render();
+  }
+
   async function restart(confirmed = false) {
     if (!["ready", "show", "result", "turnEnd", "final"].includes(S.screen)) return;
     if (!confirmed && !(await ask("Restart the game?", "Restart"))) return;
     clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = "";
     S.scores = Array(S.teamCount).fill(0); S.clears = Array(S.teamCount).fill(0);
     S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
-    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false; S.skipping = false; S.screen = "ready"; render();
+    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.revealed = false; S.skipping = false; S.screen = "ready"; render();
   }
 
   function toMenu() { S.skipping = false; clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = ""; clearGame(); S.screen = "setup"; render(); }
@@ -512,7 +586,7 @@
   // ---------- save / resume (localStorage on this device) ----------
   const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
     "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi",
-    "negScoring", "skips", "turnMisses", "marks", "skipsLeft"];
+    "negScoring", "skips", "turnMisses", "marks", "skipsLeft", "turnStart", "teamNames"];
   function saveGame() {
     if (!["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
     const g = { savedAt: Date.now() };
@@ -537,7 +611,7 @@
     GAME_FIELDS.forEach((k) => { if (k in g) S[k] = g[k]; });
     S.queue = g.queue; S.qi = Math.min(g.qi || 0, S.queue.length - 1);
     if (!S.card && S.screen === "result") S.screen = "ready";
-    S.undoStack = []; S.paused = false; S.undone = false; S.skipping = false;
+    S.undoStack = []; S.paused = false; S.revealed = false; S.skipping = false;
     if (S.skipsLeft == null) S.skipsLeft = S.skips < 0 ? Infinity : S.skips;   // Infinity is saved as null
     S.marks = S.marks || []; S.turnMisses = S.turnMisses || 0;
     saveSettings(); render();
@@ -562,9 +636,11 @@
   }
 
   // ---------- effects ----------
+  let confettiTimer;
   function confetti() {
     const box = document.getElementById("confetti");
     box.innerHTML = "";
+    clearTimeout(confettiTimer);   // an earlier burst's cleanup must not cut this one short
     for (let i = 0; i < 120; i++) {
       const c = document.createElement("i");
       c.style.left = Math.random() * 100 + "vw";
@@ -574,7 +650,7 @@
       c.style.setProperty("--r", (Math.random() * 720 - 360) + "deg");
       box.appendChild(c);
     }
-    setTimeout(() => (box.innerHTML = ""), 5000);
+    confettiTimer = setTimeout(() => (box.innerHTML = ""), 5000);
   }
   let toastTimer;
   function toast(msg) {
@@ -644,12 +720,14 @@
       </button>`).join("");
     const teamPreview = Array.from({ length: S.teamCount }, (_, t) => `
       <div class="tprev" style="--c:${teamColor(t)}">
-        <div class="thead"><button type="button" class="swatch" data-colorpick="${t}" aria-label="Change ${teamName(t)} color" aria-expanded="${S.colorPick === t}"></button><b>${teamName(t)}</b></div>
+        <div class="thead"><button type="button" class="swatch" data-colorpick="${t}" aria-label="Change ${teamName(t)} color" aria-expanded="${S.colorPick === t}"></button>${S.editTeam === t
+          ? `<input class="tname-input" id="tname-input" data-t="${t}" maxlength="20" value="${esc(teamName(t))}" placeholder="${teamPal(t).name} Team" aria-label="Team name" spellcheck="false" />`
+          : `<b class="tname" data-tname="${t}" title="Double-click to rename">${teamName(t)}</b>`}</div>
         ${S.colorPick === t ? `<div class="swatches" role="listbox" aria-label="Team color">${TEAMS.map((c, i) => {
           const owner = S.teamColors.indexOf(i);
           return `<button type="button" class="sw ${i === S.teamColors[t] ? "on" : ""} ${owner >= 0 && owner !== t ? "taken" : ""}" data-setcolor="${t}:${i}" style="--c:${c.color}" title="${c.name}${owner >= 0 && owner !== t ? " (swap with " + teamName(owner) + ")" : ""}" aria-label="${c.name}"></button>`;
         }).join("")}</div>` : ""}
-        ${relay ? `<div class="psize"><button type="button" data-tsize="${t}" data-d="-1" ${S.teamSizes[t] <= 1 ? "disabled" : ""} aria-label="Remove a player from ${teamName(t)}">−</button>
+        ${relay ? `<div class="psize"><button type="button" data-tsize="${t}" data-d="-1" ${S.teamSizes[t] <= 1 && S.teamCount <= 1 ? "disabled" : ""} aria-label="${S.teamSizes[t] <= 1 ? `Remove ${teamName(t)}` : `Remove a player from ${teamName(t)}`}">−</button>
           <span class="pdots">${Array.from({ length: S.teamSizes[t] }, (_, p) => `<i>${p + 1}</i>`).join("")}</span>
           <button type="button" data-tsize="${t}" data-d="1" ${S.teamSizes[t] >= MAX_PER_TEAM ? "disabled" : ""} aria-label="Add a player to ${teamName(t)}">+</button></div>` : ""}</div>`).join("");
     const segs = (name, vals, cur, fmt = (v) => v) => `<div class="seg">${vals.map((v) => `<button type="button" data-${name}="${v}" class="${v === cur ? "on" : ""}">${fmt(v)}</button>`).join("")}</div>`;
@@ -667,7 +745,7 @@
       </header>
       ${S.error ? `<div class="err">${esc(S.error)}</div>` : ""}
       ${(() => { const g = loadGame(); if (!g) return "";
-        const names = g.scores.map((sc, t) => { const pal = TEAMS[g.teamColors?.[t] ?? t] || TEAMS[t]; return `<span class="rs"><i class="dot" style="--c:${pal.color}"></i>${pal.name} ${sc}</span>`; }).join("");
+        const names = g.scores.map((sc, t) => { const pal = TEAMS[g.teamColors?.[t] ?? t] || TEAMS[t]; return `<span class="rs"><i class="dot" style="--c:${pal.color}"></i>${g.teamNames?.[t] || pal.name} ${sc}</span>`; }).join("");
         return `<div class="resume"><span class="rtitle">Game in progress</span>${names}<span class="spacer"></span>
           <button class="ghost" data-act="discard" type="button">Discard</button>
           <button class="big go resume-btn" data-act="resume" type="button">Resume</button></div>`; })()}
@@ -705,7 +783,10 @@
                  <div><h3>Order</h3>${segs("laps", [1, 2], S.laps, (v) => (v === 1 ? "Once" : "Down & back"))}</div>`
               : `<div><h3>Rounds</h3>${segs("rounds", [10, 20, 30, 50], S.rounds)}</div>`}
             <div><h3>${relay ? "Skips per turn" : "Skips"}</h3>${segs("skips", [0, 1, 2, -1], S.skips, (v) => (v < 0 ? "Unlimited" : v))}</div>
-            <div><h3>Negative scoring</h3><button type="button" class="switch ${S.negScoring ? "on" : ""}" role="switch" aria-checked="${S.negScoring}" data-act="neg" aria-label="Negative scoring" title="A wrong answer costs a point and play carries on"><i></i></button></div>
+            <div class="toggles">
+              <label class="tg"><button type="button" class="switch ${S.negScoring ? "on" : ""}" role="switch" aria-checked="${S.negScoring}" data-act="neg" title="A wrong answer costs a point and play carries on"><i></i></button>Negative scoring</label>
+              <label class="tg"><button type="button" class="switch ${S.repeatFaces ? "on" : ""}" role="switch" aria-checked="${!!S.repeatFaces}" data-act="repeat" title="Off: faces from the last game don't come up again until the deck runs out"><i></i></button>Repeat faces from last game</label>
+            </div>
           </div>
         </section>
       </div>
@@ -756,19 +837,41 @@
     </figure>`;
   }
 
-  function podium() {
+  // Final standings: ranks share a number on a tie
+  function standings() {
     const ranked = S.scores.map((s, t) => ({ t, s, c: S.clears[t] })).sort((a, b) => b.s - a.s);
-    const rankOf = (r) => ranked.findIndex((x) => x.s === r.s);
-    return `<ol class="podium">${ranked.map((r) => {
-      const k = rankOf(r);
-      const meta = S.mode === "relay" && r.c ? `${r.c} chain${r.c > 1 ? "s" : ""}` : "";
-      return `<li class="${k === 0 && r.s > 0 ? "top" : ""}" style="--c:${teamColor(r.t)}">
-        <span class="rank">${S.teamCount > 1 ? k + 1 : ""}</span>
-        <span class="team"><i class="dot"></i>${teamName(r.t)}</span>
-        <span class="meta">${meta}</span>
-        <span class="pts">${r.s}</span></li>`;
-    }).join("")}</ol>`;
+    ranked.forEach((r) => { r.rank = ranked.findIndex((x) => x.s === r.s) + 1; });
+    return ranked;
   }
+  const chainsLabel = (r) => (S.mode === "relay" && r.c ? `${r.c} chain${r.c > 1 ? "s" : ""}` : "");
+
+  // Top 3 on rings (2nd · 1st · 3rd), a slowly turning glow behind the winner, medals by rank
+  function podiumTop(top, hasRest = false) {
+    const slot = (r) => {
+      if (!r) return "";
+      const medal = r.rank === 1 ? "gold" : r.rank === 2 ? "silver" : "bronze";
+      const meta = [pointsLabel(r.s), chainsLabel(r)].filter(Boolean).join(" · ");
+      const first = r === top[0];
+      return `<div class="pod ${medal} ${first ? "first" : ""}" style="--c:${teamColor(r.t)}">
+        <div class="pod-ring"><span class="pod-score">${r.s}</span>
+          ${first ? `<i class="spark s1" aria-hidden="true"></i><i class="spark s2" aria-hidden="true"></i>` : ""}
+          <span class="medal">${r.rank}</span></div>
+        <div class="pod-label"><b class="pod-name"><i class="dot"></i>${teamName(r.t)}</b><small class="pod-meta">${meta}</small></div></div>`;
+    };
+    // The glow sits behind every ring (first child, lowest layer), centred on the winner
+    return `<div class="pod3 n${top.length} ${hasRest ? "has-rest" : ""}"><div class="pod-glow" aria-hidden="true"><i class="rays"></i><i class="halo"></i></div>
+      ${slot(top[1])}${slot(top[0])}${slot(top[2])}</div>`;
+  }
+
+  // Everyone else (4th place down), as a list
+  function podium(list) {
+    return `<ol class="podium">${list.map((r) => `<li class="${r.rank === 1 && r.s > 0 ? "top" : ""}" style="--c:${teamColor(r.t)}">
+        <span class="rank">${r.rank}</span>
+        <span class="team"><i class="dot"></i>${teamName(r.t)}</span>
+        <span class="meta">${chainsLabel(r)}</span>
+        <span class="pts">${r.s}</span></li>`).join("")}</ol>`;
+  }
+
 
   function viewGame() {
     const relay = S.mode === "relay";
@@ -792,11 +895,16 @@
       }
       case "show": {
         const left = S.skipping ? S.seconds : timeLeft(), frac = Math.max(0, left / S.seconds);
-        const state = S.skipping ? "paused skipping" : S.undone ? "undone" : S.paused ? "paused" : "";
-        stage = `<div class="showwrap ${state}">${photo(false, "live")}
-            ${S.skipping ? `<div class="state-chip" id="skipchip">Skipping</div>` : S.undone ? `<div class="state-chip">Undone · judge again</div>` : S.paused ? `<div class="state-chip">Paused</div>` : ""}</div>
+        const state = S.skipping ? "paused skipping" : S.revealed ? "" : S.paused ? "paused" : "";
+        stage = `<div class="showwrap ${state} ${S.revealed ? "revealed" : ""}">${photo(S.revealed, "live")}
+            ${S.skipping ? `<div class="state-chip" id="skipchip">Skipping</div>` : S.paused && !S.revealed ? `<div class="state-chip">Paused</div>` : ""}</div>
           <div class="timer"><div class="track"><div id="timebar" style="transform:scaleX(${frac})" data-hot="${frac < 0.34 ? 1 : ""}"></div></div><div id="timenum">${Math.ceil(left)}</div></div>`;
-        keys = relay ? "" : `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}${S.negScoring ? ` ${keyHint(`⇧1–${S.teamCount}`, "−1")}` : ""}`;
+        const teamKeys = `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}${S.negScoring ? ` ${keyHint(`⇧1–${S.teamCount}`, "−1")}` : ""}`;
+        // No phone: Space reveals the name, then the host judges. With a phone, the phone holds the answer.
+        keys = S.skipping || (S.paused && !S.revealed) ? ""
+          : solo() && !S.revealed ? ""
+          : !relay ? teamKeys
+          : "";   // relay without a phone: [ wrong / ] right sit with Skip on the right
         break;
       }
       case "result": {
@@ -825,8 +933,12 @@
           : ranked[0].s === 0 ? "Nobody scored"
           : leaders.length > 1 ? "Tie"
           : `<span style="color:${teamColor(ranked[0].t)}">${teamName(ranked[0].t)}</span> wins`;
-        stage = `<div class="end win"><h2>${headline}</h2>
-          ${podium()}
+        const all = standings();
+        // Podium for 1 team or 3+ with a single winner. 2 teams (lopsided), a tie for 1st, or nobody scoring: the table
+        const usePod = ranked[0].s > 0 && S.teamCount !== 2 && leaders.length === 1;
+        const board = usePod ? podiumTop(all.slice(0, 3), all.length > 3) + (all.length > 3 ? podium(all.slice(3)) : "") : podium(all);
+        stage = `<div class="end win ${usePod ? "has-pod" : ""}"><h2>${headline}</h2>
+          ${board}
           <button class="big go" data-act="primary" type="button">Menu</button></div>`;
         break;
       }
@@ -837,9 +949,15 @@
       <section class="stage">${stage}</section>
       ${bottom}
       <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${phoneConns.size ? `<span class="kh live">${IC.remote} Phone connected</span>` : ""}
-        ${S.screen === "show" && !S.undone && !S.skipping ? `<button class="txt-btn" data-act="pause" type="button" title="Pause (P)"><kbd>P</kbd>${S.paused ? "Resume" : "Pause"}</button>` : ""}
-        ${S.screen === "show" && !(S.paused && !S.undone) && !S.skipping && S.skipsLeft > 0 ? `<button class="txt-btn" data-act="skip" type="button" title="Skip face (S)"><kbd>S</kbd>Skip${Number.isFinite(S.skipsLeft) ? ` · ${S.skipsLeft}` : ""}</button>` : ""}
+        ${S.screen === "show" && !S.revealed && !S.skipping ? `<button class="txt-btn" data-act="pause" type="button" title="Pause (P)"><kbd>P</kbd>${S.paused ? "Resume" : "Pause"}</button>` : ""}
+        ${S.screen === "show" && relay && S.revealed && solo() ? `<button class="txt-btn" data-act="wrong" type="button" title="Wrong (${WRONG_KEY})"><kbd>${WRONG_KEY}</kbd>Wrong</button><button class="txt-btn" data-act="right" type="button" title="Right (Space)"><kbd>Space</kbd>Right</button>` : ""}
+        ${S.screen === "show" && !(S.paused && !S.revealed) && !S.skipping && S.skipsLeft > 0 ? `<button class="txt-btn" data-act="skip" type="button" title="Skip face (S)"><kbd>S</kbd>Skip${Number.isFinite(S.skipsLeft) ? ` · ${S.skipsLeft}` : ""}</button>` : ""}
         ${S.undoStack.length && S.screen === "result" ? `<button class="txt-btn" data-act="undo" type="button" title="Undo last call (U)"><kbd>U</kbd>Undo</button>` : ""}
+        ${(() => {   // Space: "Next" between screens, "Confirm" while a face is up (reveal with no phone / right answer)
+          const lbl = ["ready", "result", "turnEnd"].includes(S.screen) ? "Next"
+            : S.screen === "show" && !S.skipping && !S.paused && (relay || solo()) ? "Confirm" : "";
+          return lbl ? `<button class="txt-btn" data-act="primary" type="button" title="${lbl} (Space)"><kbd>Space</kbd>${lbl}</button>` : "";
+        })()}
         <button class="ghost sm icon" data-act="restart" type="button" title="Restart (R)" aria-label="Restart">${IC.restart}</button>
         <button class="ghost sm icon" data-act="mute" type="button" title="Sound (M)" aria-label="${S.muted ? "Unmute" : "Mute"}">${S.muted ? IC.soundOff : IC.soundOn}</button>
         <button class="ghost sm icon ${document.fullscreenElement ? "fs-on" : ""}" data-act="fs" type="button" title="${document.fullscreenElement ? "Exit fullscreen (F)" : "Fullscreen (F)"}" aria-label="${document.fullscreenElement ? "Exit fullscreen" : "Fullscreen"}">${document.fullscreenElement ? IC.collapse : IC.expand}</button>
@@ -849,6 +967,25 @@
 
   // ---------- setup bindings ----------
   function bindSetup() {
+    // Rename a team: double-click its name, Enter / click away saves, Esc cancels, empty = default colour name
+    document.querySelectorAll("[data-tname]").forEach((el) => el.addEventListener("dblclick", () => { S.editTeam = +el.dataset.tname; S.colorPick = null; render(); }));
+    const ti = document.getElementById("tname-input");
+    if (ti) {
+      ti.focus(); ti.select();
+      let done = false;
+      const finish = (save) => {
+        if (done) return; done = true;
+        const t = +ti.dataset.t;
+        if (save) {
+          const v = ti.value.replace(/[<>&"]/g, "").replace(/\s+/g, " ").trim();
+          S.teamNames[t] = v && v !== `${teamPal(t).name} Team` ? v : "";
+          saveSettings();
+        }
+        S.editTeam = null; render();
+      };
+      ti.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); finish(true); } if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(false); } });
+      ti.addEventListener("blur", () => finish(true));
+    }
     const ta = document.getElementById("customNames");
     ta?.addEventListener("input", () => { S.customNames = ta.value; saveSettings(); });
     document.getElementById("photos")?.addEventListener("change", (e) => {
@@ -875,7 +1012,7 @@
     if (d.colorpick !== undefined) { const t = +d.colorpick; S.colorPick = S.colorPick === t ? null : t; return render(); }
     if (d.setcolor) { const [t, c] = d.setcolor.split(":").map(Number); setTeamColor(t, c); S.colorPick = null; saveSettings(); return render(); }
     if (d.tsize !== undefined) {
-      const i = +d.tsize; S.teamSizes[i] = clamp(S.teamSizes[i] + +d.d, 1, MAX_PER_TEAM); saveSettings(); return render();
+      changeTeamSize(+d.tsize, +d.d); saveSettings(); return render();
     }
     if (d.secs) { S.seconds = +d.secs; saveSettings(); return render(); }
     if (d.laps) { S.laps = +d.laps; saveSettings(); return render(); }
@@ -893,9 +1030,12 @@
       case "keys": return openShortcuts();
       case "addToggle": S.addOpen = !S.addOpen; render(); if (S.addOpen) document.getElementById("customNames")?.focus(); return;
       case "neg": S.negScoring = !S.negScoring; saveSettings(); return render();
-      case "restart": return restart();
+      case "repeat": S.repeatFaces = !S.repeatFaces; saveSettings(); return render();
+      case "restart": return restartMenu();
       case "pause": return togglePause();
       case "skip": return skip();
+      case "wrong": return judge(false);
+      case "right": return judge(true);
       case "undo": return undo();
       case "resume": return resumeGame();
       case "discard": clearGame(); return render();
@@ -917,8 +1057,11 @@
     else enterFullscreen();
   }
 
+  let modArmed = false;
   document.addEventListener("keydown", (e) => {
     if (IS_HOST_VIEW) return;
+    modArmed = (e.key === "Meta" || e.key === "Control") && !e.repeat;
+    if (e.metaKey || e.ctrlKey || e.altKey) return;   // ⌘R, Ctrl+R etc. belong to the browser
     const typing = /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName) || document.querySelector("dialog[open]");
     if (typing) return;
     const k = e.key;
@@ -927,8 +1070,9 @@
     if (k === "Escape" && S.colorPick !== null) { S.colorPick = null; return render(); }
     if (k === " " || k === "Spacebar") { e.preventDefault(); return primary(); }
     if (k === "Enter" && S.screen === "setup") { e.preventDefault(); return startGame(); }
-    if (k === "ArrowLeft" || k === "Backspace" || k === "x" || k === "X") { e.preventDefault(); return judge(false); }
-    if ((k === "r" || k === "R") && S.screen !== "setup" && S.screen !== "loading") return restart();
+    if (k === "ArrowLeft" || k === "Backspace" || k === "x" || k === "X" || k === "[") { e.preventDefault(); return judge(false); }
+    if (k === "]") { e.preventDefault(); return judge(true); }
+    if ((k === "r" || k === "R") && S.screen !== "setup" && S.screen !== "loading") return restartMenu();
     if (e.shiftKey && /^Digit[1-9]$/.test(e.code) && S.mode === "shout") return penalize(+e.code.slice(5) - 1);
     if (/^[0-9]$/.test(k) && S.mode === "shout") return award(k === "0" ? -1 : +k - 1);
     if (k === "f" || k === "F") return toggleFs();
@@ -939,6 +1083,14 @@
     if (k === "t" || k === "T") { S.tvMode = !S.tvMode; saveSettings(); return render(); }
     if (k === "Escape" && S.screen !== "setup" && S.screen !== "loading") { e.preventDefault(); ask("Quit to menu?", "Quit").then((ok) => ok && toMenu()); }
   });
+
+  document.addEventListener("keyup", (e) => {
+    if (IS_HOST_VIEW || !modArmed || !(e.key === "Meta" || e.key === "Control")) return;
+    modArmed = false;
+    if (document.querySelector("dialog[open]")) return;
+    if (S.mode === "relay" && S.revealed && S.screen === "show") judge(false);
+  });
+  window.addEventListener("blur", () => { modArmed = false; });
 
   // ---------- remote control ----------
   // The phone scans a QR code and connects straight to this browser over WebRTC (PeerJS).
@@ -969,7 +1121,12 @@
     peer = new window.Peer(PEER_PREFIX + code, { debug: 0 });
     peer.on("open", () => { roomCode = code; roomStatus = "ready"; try { localStorage.setItem(ROOM_KEY, code); } catch {} paintRemoteDialog(); render(); });
     peer.on("connection", (conn) => {
-      conn.on("open", () => { phoneConns.add(conn); broadcast(); render(); paintRemoteDialog(); });
+      conn.on("open", () => {
+        // One phone at a time: the newest one takes over and any other phone is told it was replaced
+        const old = [...phoneConns]; phoneConns.clear();
+        old.forEach((c) => { try { c.send({ type: "replaced" }); } catch {} setTimeout(() => { try { c.close(); } catch {} }, 300); });
+        phoneConns.add(conn); broadcast(); render(); paintRemoteDialog();
+      });
       conn.on("data", handleRemote);
       const drop = () => { if (phoneConns.delete(conn)) { render(); paintRemoteDialog(); } };
       conn.on("close", drop); conn.on("error", drop);
@@ -1006,10 +1163,11 @@
       case "mode": S.mode = v === "shout" ? "shout" : "relay";
         if (S.mode === "shout" && S.seconds < 5) S.seconds = 5; if (S.mode === "relay" && S.seconds > 3) S.seconds = 3; break;
       case "teamCount": S.teamCount = clamp(n, 1, MAX_TEAMS); syncTeams(); break;
-      case "teamSize": { const [t, d] = String(v).split(":").map(Number); if (S.teamSizes[t] != null) S.teamSizes[t] = clamp(S.teamSizes[t] + d, 1, MAX_PER_TEAM); break; }
+      case "teamSize": { const [t, d] = String(v).split(":").map(Number); changeTeamSize(t, d); break; }
       case "deck": chooseDeck(v); break;
       case "secs": if ([2, 3, 5, 8].includes(n)) S.seconds = n; break;
       case "neg": S.negScoring = v === "on"; break;
+      case "repeat": S.repeatFaces = v === "on"; break;
       case "skips": if ([0, 1, 2, -1].includes(n)) S.skips = n; break;
       case "turns": if ([1, 2, 3, 5].includes(n)) S.turns = n; break;
       case "chances": if ([1, 2, 3].includes(n)) S.chances = n; break;
@@ -1118,13 +1276,13 @@
           color: top.length === 1 && S.teamCount > 1 && ranked[0].score > 0 ? ranked[0].color : null, ranked };
       })() : null,
       skipsLeft: Number.isFinite(S.skipsLeft) ? S.skipsLeft : null, neg: !!S.negScoring,
-      paused: S.paused, undone: S.undone, skipping: S.skipping, canUndo: S.undoStack.length > 0, muted: !!S.muted,
+      paused: S.paused, revealed: S.revealed, skipping: S.skipping, canUndo: S.undoStack.length > 0, muted: !!S.muted,
       settings: S.screen === "setup" ? {
         mode: S.mode, teamCount: S.teamCount, seconds: S.seconds, turns: S.turns, chances: S.chances, laps: S.laps, rounds: S.rounds,
         teams: Array.from({ length: S.teamCount }, (_, t) => ({ name: teamName(t), color: teamColor(t), size: S.teamSizes[t] })),
         decks: [{ k: "famous", label: "Famous only", n: famousCount(), on: !!S.famousOnly }]
           .concat(Object.entries(window.DECKS).map(([k, d]) => ({ k, label: d.label, n: d.people.length, on: !S.famousOnly && S.decks.includes(k) }))),
-        famous: S.famousOnly ? "famous" : "all", neg: !!S.negScoring, skips: S.skips,
+        famous: S.famousOnly ? "famous" : "all", neg: !!S.negScoring, repeat: !!S.repeatFaces, skips: S.skips,
       } : null,
       left: S.screen === "show" ? timeLeft() : 0,
     };
@@ -1150,12 +1308,12 @@
         case "ready": return { main: B("primary", "Next") };
         case "show":
           if (st.skipping) return { main: "" };
-          if (st.paused && !st.undone) return { main: B("pause", "Resume") };
-          if (!relay) return { main: (st.undone ? "" : skipPause) + (st.neg
+          if (st.paused && !st.revealed) return { main: B("pause", "Resume") };
+          if (!relay) return { main: skipPause + (st.neg
               ? `<div class="r-teams">${st.teams.map((t, i) => `<div class="r-team"><button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button><button class="ghost r-minus" data-h="penalize" data-arg="${i}" aria-label="${esc(t.name)} minus one">−1</button></div>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`
               : `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`) };
           // "Next" moves the game on (during a face it scores the answer). A wrong answer is ← / the timeout, or Undo to re-judge
-          return { main: (st.undone ? "" : skipPause) + B("primary", "Next") };
+          return { main: skipPause + B("primary", "Next") };
         case "result": return { main: undo + B("primary", "Next") };
         case "turnEnd": return { main: B("primary", st.turnEnd?.last ? "See results" : "Next team") };
         case "final": return { main: B("primary", "Back to menu") };
@@ -1175,7 +1333,7 @@
         ${row("Mode", tabs("mode", [["relay", "Relay"], ["shout", "Shout-Out"]], cfg.mode))}
         ${row("Teams", tabs("teamCount", [1, 2, 3, 4, 5, 6].map((n) => [n, n]), cfg.teamCount))}
         ${relay ? cfg.teams.map((t, i) => row(`<i class="dot" style="--c:${t.color}"></i>${esc(t.name)}`,
-          `<div class="r-step"><button type="button" data-h="set" data-k="teamSize" data-v="${i}:-1" ${t.size <= 1 ? "disabled" : ""}>−</button><b>${t.size}</b><button type="button" data-h="set" data-k="teamSize" data-v="${i}:1" ${t.size >= 8 ? "disabled" : ""}>+</button></div>`)).join("") : ""}
+          `<div class="r-step"><button type="button" data-h="set" data-k="teamSize" data-v="${i}:-1" ${t.size <= 1 && cfg.teams.length <= 1 ? "disabled" : ""}>−</button><b>${t.size}</b><button type="button" data-h="set" data-k="teamSize" data-v="${i}:1" ${t.size >= 8 ? "disabled" : ""}>+</button></div>`)).join("") : ""}
         <div class="r-row r-col"><span class="r-label">Personalities</span><div class="r-decks">${cfg.decks.map((d) =>
           `<button type="button" class="deck ${d.on ? "on" : ""}" data-h="set" data-k="deck" data-v="${d.k}">${esc(d.label)}<small>${d.n}</small></button>`).join("")}</div></div>
         ${row("Time", tabs("secs", [2, 3, 5, 8].map((n) => [n, n + "s"]), cfg.seconds))}
@@ -1185,6 +1343,7 @@
           : row("Rounds", tabs("rounds", [10, 20, 30, 50].map((n) => [n, n]), cfg.rounds))}
         ${row(relay ? "Skips per turn" : "Skips", tabs("skips", [[0, 0], [1, 1], [2, 2], [-1, "∞"]], cfg.skips))}
         ${row("Negative scoring", `<button type="button" class="switch ${cfg.neg ? "on" : ""}" role="switch" aria-checked="${cfg.neg}" aria-label="Negative scoring" data-h="set" data-k="neg" data-v="${cfg.neg ? "off" : "on"}"><i></i></button>`)}
+        ${row("Repeat faces from last game", `<button type="button" class="switch ${cfg.repeat ? "on" : ""}" role="switch" aria-checked="${cfg.repeat}" aria-label="Repeat faces from last game" data-h="set" data-k="repeat" data-v="${cfg.repeat ? "off" : "on"}"><i></i></button>`)}
       </section>`;
     };
 
@@ -1196,13 +1355,14 @@
 
     const paint = () => {
       if (conn !== "on" || !st) {
-        const msg = conn === "off" ? "The remote was turned off on the TV."
+        const msg = conn === "replaced" ? "Another phone took over the remote."
+          : conn === "off" ? "The remote was turned off on the TV."
           : conn === "notfound" ? `No game found for <b>${esc(REMOTE_CODE)}</b>.<br>Open the game on the TV and press Remote.`
           : conn === "lost" ? "Connection lost. Reconnecting…"
           : conn === "error" ? "Couldn't connect. Check the internet."
           : "Connecting to the TV…";
-        $app.innerHTML = `<main class="remote center-r"><div class="spinner ${conn === "notfound" || conn === "error" || conn === "off" ? "off" : ""}"></div><p class="r-msg">${msg}</p>
-          ${conn === "notfound" || conn === "error" || conn === "off" ? `<button class="big" data-r="retry">${conn === "off" ? "Reconnect" : "Try again"}</button>` : ""}</main>`;
+        $app.innerHTML = `<main class="remote center-r"><div class="spinner ${conn === "notfound" || conn === "error" || conn === "off" || conn === "replaced" ? "off" : ""}"></div><p class="r-msg">${msg}</p>
+          ${conn === "notfound" || conn === "error" || conn === "off" || conn === "replaced" ? `<button class="big" data-r="retry">${conn === "replaced" ? "Take over" : conn === "off" ? "Reconnect" : "Try again"}</button>` : ""}</main>`;
         return;
       }
       const a = st.skipping ? null : st.answer || st.upcoming;
@@ -1240,7 +1400,7 @@
         const c = p.connect(PEER_PREFIX + REMOTE_CODE, { reliable: true });
         const t = setTimeout(() => { if (!c.open) retry("notfound", 4000); }, 10000);
         c.on("open", () => { clearTimeout(t); conn = "on"; send = (cmd, arg) => c.open && c.send({ type: "cmd", cmd, arg }); c.send({ type: "hello" }); paint(); });
-        c.on("data", (m) => { if (m?.type === "off") { turnedOff = true; conn = "off"; clearTimeout(retryTimer); try { p.destroy(); } catch {} return paint(); } onState(m); });
+        c.on("data", (m) => { if (m?.type === "replaced") { turnedOff = true; conn = "replaced"; clearTimeout(retryTimer); try { p.destroy(); } catch {} return paint(); } if (m?.type === "off") { turnedOff = true; conn = "off"; clearTimeout(retryTimer); try { p.destroy(); } catch {} return paint(); } onState(m); });
         c.on("close", () => { if (!turnedOff) retry("lost", 1500); });
       });
       p.on("error", (e) => retry(e.type === "peer-unavailable" ? "notfound" : "error", 4000));
