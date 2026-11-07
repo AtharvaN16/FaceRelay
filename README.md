@@ -14,7 +14,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 ## Put it on the TV
 - **Chrome:** ⋮ → *Cast…* → *Cast tab*, then press **F** for fullscreen.
 - **Mac:** AirPlay / Screen Mirroring, or HDMI.
-- **Remote:** press **Remote** in the menu and scan the QR code with your phone. The phone shows the answer and only the buttons you need right now (Show face, Correct / Wrong, Skip, Pause, Next, Undo). It connects straight to the game's browser (WebRTC via the free PeerJS server), so there's no backend. Phones can't open `localhost`, so use the live site. **Use a laptop window** opens the same remote in a second window on the laptop.
+- **Remote:** press **Remote** in the menu and scan the QR code with your phone. The phone shows the answer and only the buttons you need right now (Show face, Correct / Wrong, Skip, Pause, Next, Undo). It connects straight to the game's browser (WebRTC via the free PeerJS server), so there's no backend. Phones can't open `localhost`, so use the live site.
 
 ## Setup
 - **Teams:** 1–6 teams. Click a team's colour square to change its colour. Use − / + on a team to set its players (1–8).

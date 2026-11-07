@@ -1,15 +1,14 @@
 /* Face Relay — a 3-second "name the famous face" party game for teams.
  * Plain browser JS, no build step. Photos come from Wikipedia at game start.
- * Optional host remote: a second window (?view=host) synced over BroadcastChannel.
+ * Optional phone remote: scan a QR code to control the game from a phone (WebRTC via PeerJS).
  */
 (() => {
   "use strict";
 
   const PARAMS = new URLSearchParams(location.search);
   const REMOTE_CODE = (PARAMS.get("remote") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 8);
-  // This page is a remote (laptop window or phone) rather than the game itself
-  const IS_HOST_VIEW = PARAMS.get("view") === "host" || !!REMOTE_CODE;
-  const channel = "BroadcastChannel" in window ? new BroadcastChannel("face-relay") : null;
+  // This page is the phone remote rather than the game itself
+  const IS_HOST_VIEW = !!REMOTE_CODE;
   const $app = document.getElementById("app");
   const STORE_KEY = "face-relay:settings:v2";
   const CACHE_KEY = "face-relay:wiki:v2";   // v2: non-photo images filtered out
@@ -169,8 +168,8 @@
     round: 0, awarded: null,
     deadline: 0, secondsLeft: 0, lastTick: -1,
     paused: false, pauseLeft: 0, undone: false,   // pause / undo
+    skipping: false, skipAt: 0,                   // 0.5s break after Skip before the next face
     undoStack: [],
-    hostConnected: false,
   };
   const GAME_KEY = "face-relay:game:v1";
   // Saved settings from older versions: cricket merged into sports; drop decks that no longer exist
@@ -278,7 +277,7 @@
   function go() {
     if (S.mode === "shout") S.round++;
     nextCard();
-    S.result = null; S.awarded = null; S.paused = false; S.undone = false;
+    S.result = null; S.awarded = null; S.paused = false; S.undone = false; S.skipping = false;
     S.deadline = performance.now() + S.seconds * 1000;
     S.lastTick = -1;
     S.screen = "show"; sfx.go(); render();
@@ -309,17 +308,23 @@
 
   // ---- Pause: freezes the clock and hides the face (no peeking while paused)
   function togglePause() {
-    if (S.screen !== "show") return;
+    if (S.screen !== "show" || S.skipping) return;
     if (S.paused) { S.deadline = performance.now() + S.pauseLeft * 1000; S.paused = false; S.undone = false; }
     else { S.pauseLeft = timeLeft(); S.paused = true; }
     render();
   }
 
-  // ---- Skip: swap the face for a new one, full time, no penalty
+  // ---- Skip: hide the face, give everyone a second to reorient, then deal a new face with full time (no penalty)
+  const SKIP_DELAY_MS = 500;
   function skip() {
-    if (S.screen !== "show" || (S.paused && !S.undone)) return;
-    nextCard();
+    if (S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
     S.paused = false; S.undone = false;
+    S.skipping = true; S.skipAt = performance.now() + SKIP_DELAY_MS;
+    render();
+  }
+  function finishSkip() {
+    S.skipping = false;
+    nextCard();
     S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
     sfx.go(); render();
   }
@@ -329,7 +334,7 @@
   // Relay judging
   function judge(correct) {
     if (S.mode !== "relay" || inputLocked()) return;
-    if (S.screen !== "show" || (S.paused && !S.undone)) return;
+    if (S.screen !== "show" || (S.paused && !S.undone) || S.skipping) return;
     stopClock(); snapshot(); S.paused = false; S.undone = false;
     S.result = correct ? "correct" : "wrong";
     if (correct) { S.scores[S.team]++; S.run++; sfx.correct(); }
@@ -376,7 +381,7 @@
 
   // Shout-out: award a team
   function award(t) {
-    if (S.mode !== "shout" || S.screen !== "show" || (S.paused && !S.undone) || inputLocked()) return;
+    if (S.mode !== "shout" || S.screen !== "show" || (S.paused && !S.undone) || S.skipping || inputLocked()) return;
     stopClock(); snapshot(); S.paused = false; S.undone = false;
     if (t >= 0 && t < S.teamCount) { S.scores[t]++; S.awarded = t; sfx.correct(); }
     else { S.awarded = -1; sfx.wrong(); }
@@ -389,6 +394,7 @@
       case "setup": return startGame();
       case "ready": return go();
       case "show":
+        if (S.skipping) return;
         if (S.paused && !S.undone) return togglePause();   // Space resumes a paused face
         if (S.mode === "relay") judge(true); else award(-1); return;
       case "result": case "turnEnd": return advance();
@@ -418,10 +424,10 @@
     clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = "";
     S.scores = Array(S.teamCount).fill(0); S.clears = Array(S.teamCount).fill(0);
     S.team = 0; S.turnNo = 1; S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false;
-    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false; S.screen = "ready"; render();
+    S.round = 0; S.awarded = null; S.undoStack = []; S.paused = false; S.undone = false; S.skipping = false; S.screen = "ready"; render();
   }
 
-  function toMenu() { clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = ""; clearGame(); S.screen = "setup"; render(); }
+  function toMenu() { S.skipping = false; clearTimeout(autoTimer); document.getElementById("confetti").innerHTML = ""; clearGame(); S.screen = "setup"; render(); }
 
   // ---------- save / resume (localStorage on this device) ----------
   const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
@@ -456,7 +462,10 @@
 
   // ---------- timer loop ----------
   function loop() {
-    if (S.screen === "show" && !S.paused && !IS_HOST_VIEW) {
+    if (S.screen === "show" && S.skipping && !IS_HOST_VIEW) {
+      const left = S.skipAt - performance.now();
+      if (left <= 0) finishSkip();
+    } else if (S.screen === "show" && !S.paused && !IS_HOST_VIEW) {
       const left = (S.deadline - performance.now()) / 1000;
       const bar = document.getElementById("timebar"), num = document.getElementById("timenum");
       const frac = Math.max(0, left / S.seconds);
@@ -506,6 +515,7 @@
     soundOn: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M15.5 9a4 4 0 0 1 0 6M18 6.5a7.5 7.5 0 0 1 0 11"/>'),
     soundOff: svg('<path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z"/><path d="M16 10l4 4M20 10l-4 4"/>'),
     restart: svg('<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>'),
+    menu: svg('<path d="M4 7h16M4 12h16M4 17h16"/>'),
     close: svg('<path d="M6 6l12 12M18 6L6 18"/>'),
     plus: svg('<path d="M12 5v14M5 12h14"/>'),
     chain: svg('<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>'),
@@ -561,7 +571,7 @@
       <header class="brand">
         <div class="logo"><span class="logo-mark" aria-hidden="true"><i></i><i></i></span><h1>Face Relay</h1></div>
         <div class="top-actions">
-          <button class="ghost" data-act="host" type="button" title="Control the game from your phone">${IC.remote} Remote</button>
+          ${remotePill()}
           <button class="ghost ${S.tvMode ? "active" : ""}" data-act="tv" type="button" aria-pressed="${!!S.tvMode}" title="Higher contrast for TVs (T)">${IC.tv} TV mode</button>
           <button class="ghost" data-act="fs" type="button">${IC.expand} Fullscreen</button>
         </div>
@@ -690,10 +700,10 @@
         break;
       }
       case "show": {
-        const left = timeLeft(), frac = Math.max(0, left / S.seconds);
-        const state = S.undone ? "undone" : S.paused ? "paused" : "";
+        const left = S.skipping ? S.seconds : timeLeft(), frac = Math.max(0, left / S.seconds);
+        const state = S.skipping ? "paused skipping" : S.undone ? "undone" : S.paused ? "paused" : "";
         stage = `<div class="showwrap ${state}">${photo(false, "live")}
-            ${S.undone ? `<div class="state-chip">Undone · judge again</div>` : S.paused ? `<div class="state-chip">Paused</div>` : ""}</div>
+            ${S.skipping ? `<div class="state-chip" id="skipchip">Skipping</div>` : S.undone ? `<div class="state-chip">Undone · judge again</div>` : S.paused ? `<div class="state-chip">Paused</div>` : ""}</div>
           <div class="timer"><div class="track"><div id="timebar" style="transform:scaleX(${frac})" data-hot="${frac < 0.34 ? 1 : ""}"></div></div><div id="timenum">${Math.ceil(left)}</div></div>`;
         keys = relay ? "" : `${keyHint(`1–${S.teamCount}`, "award")} ${keyHint("0", "nobody")}`;
         break;
@@ -735,14 +745,14 @@
       ${top}
       <section class="stage">${stage}</section>
       ${bottom}
-      <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${S.hostConnected || phoneConns.size ? `<span class="kh live">${IC.remote} Remote on</span>` : ""}
-        ${S.screen === "show" && !S.undone ? `<button class="ghost sm" data-act="pause" type="button" title="Pause (P)">${S.paused ? IC.play : IC.pause} ${S.paused ? "Resume" : "Pause"}</button>` : ""}
-        ${S.screen === "show" && !(S.paused && !S.undone) ? `<button class="ghost sm" data-act="skip" type="button" title="Skip face (S)">${IC.skip} Skip</button>` : ""}
-        ${S.undoStack.length && S.screen !== "final" ? `<button class="ghost sm" data-act="undo" type="button" title="Undo last call (U)">${IC.undo} Undo</button>` : ""}
-        <button class="ghost sm" data-act="restart" type="button" title="Restart (R)">${IC.restart} Restart</button>
+      <footer class="keys">${S.screen !== "final" ? `${scoreboard()}<span class="prog">${progress}</span>` : ""}${keys ? `<span class="hints">${keys}</span>` : ""}<span class="spacer"></span>${phoneConns.size ? `<span class="kh live">${IC.remote} Phone connected</span>` : ""}
+        ${S.screen === "show" && !S.undone && !S.skipping ? `<button class="txt-btn" data-act="pause" type="button" title="Pause (P)"><kbd>P</kbd>${S.paused ? "Resume" : "Pause"}</button>` : ""}
+        ${S.screen === "show" && !(S.paused && !S.undone) && !S.skipping ? `<button class="txt-btn" data-act="skip" type="button" title="Skip face (S)"><kbd>S</kbd>Skip</button>` : ""}
+        ${S.undoStack.length && S.screen === "result" ? `<button class="txt-btn" data-act="undo" type="button" title="Undo last call (U)"><kbd>U</kbd>Undo</button>` : ""}
+        <button class="ghost sm icon" data-act="restart" type="button" title="Restart (R)" aria-label="Restart">${IC.restart}</button>
         <button class="ghost sm icon" data-act="mute" type="button" title="Sound (M)" aria-label="${S.muted ? "Unmute" : "Mute"}">${S.muted ? IC.soundOff : IC.soundOn}</button>
         <button class="ghost sm icon" data-act="fs" type="button" title="Fullscreen (F)" aria-label="Fullscreen">${IC.expand}</button>
-        <button class="ghost sm" data-act="menu" type="button" title="Menu (Esc)">${IC.close} Menu</button></footer>
+        <button class="ghost sm" data-act="menu" type="button" title="Menu (Esc)">${IC.menu} Menu</button></footer>
     </main>`;
   }
 
@@ -797,13 +807,14 @@
       case "mute": S.muted = !S.muted; saveSettings(); return render();
       case "menu": ask("Quit to menu?", "Quit").then((ok) => ok && toMenu()); return;
       case "host": return openRemoteDialog();
+      case "remoteOff": userTurnedOff = true; stopRoom(); toast("Phone disconnected"); return;
     }
   });
 
   function enterFullscreen() {
     if (document.fullscreenElement || !document.documentElement.requestFullscreen) return;
     document.documentElement.requestFullscreen()
-      .then(() => navigator.keyboard?.lock?.(["Escape"]).catch(() => {}))
+      .then(() => { navigator.keyboard?.lock?.(["Escape"]).catch(() => {}); if (S.screen === "setup") render(); })
       .catch(() => {});
   }
   function toggleFs() {
@@ -833,10 +844,8 @@
   });
 
   // ---------- remote control ----------
-  // Two ways to connect a remote:
-  //  • Phone: scans a QR code and connects straight to this browser over WebRTC (PeerJS).
-  //    The free PeerJS server only introduces the two devices; game messages go device to device.
-  //  • Laptop window: ?view=host, synced over BroadcastChannel (same browser).
+  // The phone scans a QR code and connects straight to this browser over WebRTC (PeerJS).
+  // The free PeerJS server only introduces the two devices; game messages go device to device.
   const PEERJS_SRC = "https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js";
   const QR_SRC = "https://unpkg.com/qrcode-generator@1.4.4/qrcode.js";
   const PEER_PREFIX = "facerelay-v1-";
@@ -854,14 +863,14 @@
 
   async function startRoom() {
     if (peer || roomStatus === "starting") return;
-    roomStatus = "starting"; paintRemoteDialog();
+    roomStatus = "starting"; paintRemoteDialog(); render();
     try { await loadScript(PEERJS_SRC); } catch { roomStatus = "error"; return paintRemoteDialog(); }
     let code = localStorage.getItem(ROOM_KEY) || randomCode();
     openPeer(code, 0);
   }
   function openPeer(code, attempt) {
     peer = new window.Peer(PEER_PREFIX + code, { debug: 0 });
-    peer.on("open", () => { roomCode = code; roomStatus = "ready"; try { localStorage.setItem(ROOM_KEY, code); } catch {} paintRemoteDialog(); });
+    peer.on("open", () => { roomCode = code; roomStatus = "ready"; try { localStorage.setItem(ROOM_KEY, code); } catch {} paintRemoteDialog(); render(); });
     peer.on("connection", (conn) => {
       conn.on("open", () => { phoneConns.add(conn); broadcast(); render(); paintRemoteDialog(); });
       conn.on("data", handleRemote);
@@ -890,7 +899,7 @@
     try { peer?.destroy(); } catch {}
     peer = null; roomCode = null; roomStatus = "off";
     try { localStorage.removeItem(ROOM_KEY); } catch {}
-    render();
+    render(); paintRemoteDialog();
   }
 
   function applySetting(k, v) {
@@ -929,49 +938,59 @@
   const isLocalhost = () => /^(localhost|127\.0\.0\.1|\[::1\])$/.test(location.hostname);
   const remoteUrl = () => `${location.origin}${location.pathname}?remote=${roomCode}`;
 
+  let userTurnedOff = false;
   async function openRemoteDialog() {
     let d = document.getElementById("remote-dlg");
     const fresh = !d;
     if (!d) { d = document.createElement("dialog"); d.id = "remote-dlg"; d.className = "remote-dlg"; document.body.appendChild(d); }
     if (fresh) d.addEventListener("click", (e) => {
+      if (e.target === d) return d.close();   // click on the backdrop
       const b = e.target.closest("[data-r]"); if (!b) return;
-      if (b.dataset.r === "close") d.close();
-      if (b.dataset.r === "laptop") { d.close(); openHost(); }
-      if (b.dataset.r === "retry") { roomStatus = "off"; peer?.destroy(); peer = null; startRoom(); }
-      if (b.dataset.r === "off") { stopRoom(); d.close(); toast("Remote turned off"); }
+      const r = b.dataset.r;
+      if (r === "close") d.close();
+      if (r === "on" || r === "retry") { userTurnedOff = false; roomStatus = "off"; try { peer?.destroy(); } catch {} peer = null; startRoom(); }
+      if (r === "off") { userTurnedOff = true; stopRoom(); toast("Phone remote turned off"); }
     });
     if (!d.open) d.showModal();
+    // First open turns the phone remote on; after you turn it off, it stays off until you press "Turn on"
+    if (roomStatus === "off" && !userTurnedOff) startRoom();
     paintRemoteDialog();
-    startRoom();
     loadScript(QR_SRC).then(paintRemoteDialog).catch(() => {});
   }
   function paintRemoteDialog() {
     const d = document.getElementById("remote-dlg"); if (!d || !d.open) return;
-    let qr = "";
-    if (roomStatus === "ready" && window.qrcode) {
-      const q = window.qrcode(0, "M"); q.addData(remoteUrl()); q.make();
-      qr = q.createSvgTag({ cellSize: 6, margin: 2, scalable: true });
-    }
     const n = phoneConns.size;
-    d.innerHTML = `<h2>Phone remote</h2>
-      ${roomStatus === "error" ? `<p class="r-note bad">Couldn't connect. Check the internet and try again.</p><button class="big" data-r="retry">Try again</button>`
-        : roomStatus !== "ready" ? `<div class="r-qr loading"><div class="spinner"></div></div>`
-        : `<div class="r-qr">${qr}</div>
-           <p class="r-code">${roomCode}</p>
-           <p class="r-note">Scan with your phone camera, or open<br><b>${esc(remoteUrl().replace(/^https?:\/\//, ""))}</b></p>
-           ${isLocalhost() ? `<p class="r-note warn">Phones can't open “localhost”. Use the live site or your laptop's Wi-Fi address instead.</p>` : ""}
-           <p class="r-conn ${n ? "on" : ""}">${n ? `${n} phone${n > 1 ? "s" : ""} connected` : "Waiting for a phone…"}</p>`}
-      <div class="r-actions">
-        ${roomStatus === "ready" ? `<button class="ghost" data-r="off" type="button">Turn off</button>` : ""}
-        <button class="ghost" data-r="laptop" type="button">Use a laptop window</button>
-        <button class="big" data-r="close" type="button">Done</button>
-      </div>`;
+    let body = "", actions = "";
+    if (roomStatus === "off") {
+      body = `<div class="r-qr off">${IC.remote}</div><p class="r-conn">Phone remote is off</p>`;
+      actions = `<button class="big go" data-r="on" type="button">Turn on</button>`;
+    } else if (roomStatus === "error") {
+      body = `<div class="r-qr off">${IC.remote}</div><p class="r-note bad">Couldn't connect. Check the internet and try again.</p>`;
+      actions = `<button class="big" data-r="retry" type="button">Try again</button>`;
+    } else if (roomStatus !== "ready" || !window.qrcode) {
+      body = `<div class="r-qr loading"><div class="spinner"></div></div><p class="r-conn">Turning on…</p>`;
+    } else {
+      const q = window.qrcode(0, "M"); q.addData(remoteUrl()); q.make();
+      body = `<div class="r-qr">${q.createSvgTag({ cellSize: 6, margin: 2, scalable: true })}</div>
+        <p class="r-note">Scan with your phone camera, or open<br><b>${esc(remoteUrl().replace(/^https?:\/\//, ""))}</b></p>
+        ${isLocalhost() ? `<p class="r-note warn">Phones can't open “localhost”. Use the live site or your laptop's Wi-Fi address instead.</p>` : ""}
+        <p class="r-conn ${n ? "on" : ""}">${n ? `<i class="live-dot"></i>${n} phone${n > 1 ? "s" : ""} connected` : "Waiting for a phone…"}</p>`;
+      actions = `<button class="big neutral" data-r="off" type="button">Turn off</button>`;
+    }
+    d.innerHTML = `<button class="r-close" data-r="close" type="button" aria-label="Close">${IC.close}</button>
+      <h2 class="r-title">Phone remote</h2>${body}${actions ? `<div class="r-actions">${actions}</div>` : ""}`;
   }
 
-  function openHost() {
-    if (!channel) return toast("Not supported in this browser");
-    const w = window.open(location.pathname + "?view=host", "face-relay-host", "width=420,height=720");
-    if (!w) toast("Pop-up blocked");
+  // Menu header remote button:
+  //  • off / waiting → opens the Remote dialog (you need the QR code)
+  //  • phone connected → green; one click disconnects it (hover says so)
+  function remotePill() {
+    const phones = phoneConns.size;
+    if (phones) return `<button class="ghost remote-btn connected" data-act="remoteOff" type="button" title="Click to disconnect the phone">
+        <i class="live-dot"></i><span class="rb-text">Phone connected${phones > 1 ? ` (${phones})` : ""}</span><span class="rb-hover">Disconnect</span></button>`;
+    const waiting = roomStatus === "ready" || roomStatus === "starting";
+    return `<button class="ghost remote-btn" data-act="host" type="button" title="Control the game from your phone">
+        ${waiting ? `<i class="live-dot"></i>Remote on · waiting` : `${IC.remote} Remote`}</button>`;
   }
 
   function broadcast() {
@@ -988,7 +1007,7 @@
       chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
       round: !relay && S.screen !== "setup" ? `Face ${Math.max(S.round, 1)}/${S.rounds}` : null,
       teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
-      paused: S.paused, undone: S.undone, canUndo: S.undoStack.length > 0, muted: !!S.muted,
+      paused: S.paused, undone: S.undone, skipping: S.skipping, canUndo: S.undoStack.length > 0, muted: !!S.muted,
       settings: S.screen === "setup" ? {
         mode: S.mode, teamCount: S.teamCount, seconds: S.seconds, turns: S.turns, chances: S.chances, laps: S.laps, rounds: S.rounds,
         teams: Array.from({ length: S.teamCount }, (_, t) => ({ name: teamName(t), color: teamColor(t), size: S.teamSizes[t] })),
@@ -996,18 +1015,9 @@
       } : null,
       left: S.screen === "show" ? timeLeft() : 0,
     };
-    channel?.postMessage(msg);
     for (const c of phoneConns) if (c.open) { try { c.send(msg); } catch {} }
   }
 
-  if (channel && !IS_HOST_VIEW) {
-    channel.onmessage = (ev) => {
-      const m = ev.data || {};
-      if (m.type === "hello") { S.hostConnected = true; broadcast(); render(); }
-      if (m.type === "bye") { S.hostConnected = false; render(); }
-      handleRemote(m);
-    };
-  }
 
   // ---------- the remote itself (phone or laptop window) ----------
   function remoteView() {
@@ -1023,13 +1033,15 @@
       const undo = st.canUndo ? `<div class="r-undo">${G("undo", `${IC.undo} Undo`)}</div>` : "";
       const skipPause = `<div class="r-pair">${G("skip", `${IC.skip} Skip`, "wide")}${G("pause", `${IC.pause} Pause`, "wide")}</div>`;
       switch (st.screen) {
-        case "ready": return { main: undo + B("primary", "Next") };
+        case "ready": return { main: B("primary", "Next") };
         case "show":
+          if (st.skipping) return { main: "" };
           if (st.paused && !st.undone) return { main: B("pause", "Resume") };
           if (!relay) return { main: (st.undone ? "" : skipPause) + `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>` };
           // "Next" = they got it. A wrong answer is the timeout (or Undo to re-judge)
           return { main: (st.undone ? "" : skipPause) + B("primary", "Next") };
-        case "result": case "turnEnd": return { main: undo + B("primary", "Next") };
+        case "result": return { main: undo + B("primary", "Next") };
+        case "turnEnd": return { main: B("primary", "Next") };
         case "final": return { main: B("primary", "Back to menu") };
         case "setup": return { main: B("start", "Start game", "start") };
         default: return { main: "" };
@@ -1062,7 +1074,7 @@
     const topIcons = () => !["ready", "show", "result", "turnEnd", "final"].includes(st.screen) ? "" : `<div class="r-top">
         <button class="r-icon" data-h="restartNow" data-confirm="Restart the game?" aria-label="Restart">${IC.restart}</button>
         <button class="r-icon" data-h="mute" aria-label="${st.muted ? "Turn sound on" : "Turn sound off"}">${st.muted ? IC.soundOff : IC.soundOn}</button>
-        <button class="r-icon" data-h="menuNow" data-confirm="Quit to menu?" aria-label="Menu">${IC.close}</button></div>`;
+        <button class="r-icon" data-h="menuNow" data-confirm="Quit to menu?" aria-label="Menu">${IC.menu}</button></div>`;
 
     const paint = () => {
       if (conn !== "on" || !st) {
@@ -1075,7 +1087,7 @@
           ${conn === "notfound" || conn === "error" || conn === "off" ? `<button class="big" data-r="retry">${conn === "off" ? "Reconnect" : "Try again"}</button>` : ""}</main>`;
         return;
       }
-      const a = st.answer || st.upcoming;
+      const a = st.skipping ? null : st.answer || st.upcoming;
       const who = st.team ? `<i class="dot" style="--c:${st.team.color}"></i>${esc(st.team.name)} · <b>${st.player}</b>${st.chance ? ` · chance ${st.chance}` : ""}` : st.round ? esc(st.round) : "";
       const c = controls();
       $app.innerHTML = `<main class="remote">
@@ -1085,7 +1097,7 @@
         ${a && st.screen !== "final" ? `<div class="r-card ${st.answer ? "" : "next"}"><img src="${esc(a.img)}" alt="" referrerpolicy="no-referrer" onerror="this.style.visibility='hidden'" />
           <b>${esc(a.name)}</b></div>` : ""}
         ${st.screen === "setup" ? setupRows() : ""}
-        ${st.screen === "show" ? `<div class="r-timer" id="htimer"></div>` : ""}
+        ${st.screen === "show" && st.skipping ? `<div class="r-timer r-skip"><p class="r-msg">Skipping</p></div>` : st.screen === "show" ? `<div class="r-timer" id="htimer"></div>` : ""}
         ${st.screen === "final" ? `<p class="r-msg">Game over</p>` : ""}
         <div class="r-main">${c.main}</div>
         ${c.extra ? `<div class="r-extra">${c.extra}</div>` : ""}
@@ -1113,14 +1125,7 @@
       p.on("error", (e) => retry(e.type === "peer-unavailable" ? "notfound" : "error", 4000));
     }
 
-    if (REMOTE_CODE) connectPhone();
-    else {
-      conn = "on";
-      send = (cmd, arg) => channel.postMessage({ type: "cmd", cmd, arg });
-      channel.onmessage = (ev) => onState(ev.data);
-      addEventListener("beforeunload", () => channel.postMessage({ type: "bye" }));
-      channel.postMessage({ type: "hello" });
-    }
+    connectPhone();
 
     document.addEventListener("click", (e) => {
       if (!wake && navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => (wake = w)).catch(() => {});   // keep the phone awake
@@ -1151,8 +1156,7 @@
 
   // ---------- boot ----------
   if (IS_HOST_VIEW) {
-    if (!REMOTE_CODE && !channel) $app.innerHTML = `<main class="remote center-r"><p class="r-msg">Not supported in this browser</p></main>`;
-    else remoteView();
+    remoteView();
   } else {
     render();
     requestAnimationFrame(loop);

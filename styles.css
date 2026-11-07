@@ -559,3 +559,96 @@ body.tv .keys .score, body.tv .keys .prog { font-size: clamp(15px, 1.9vmin, 24px
 .r-undo { display: flex; justify-content: center; margin-bottom: 6px; }
 .r-undo .ghost { font-size: 15px; padding: 0.65em 1.2em; }
 .r-main { gap: 10px; }
+
+/* remote status in the menu header */
+.remote-pill { display: inline-flex; align-items: center; gap: 2px; }
+.remote-pill .ghost:first-child { border-radius: 999px 0 0 999px; padding-right: 0.8em; }
+.remote-pill .ghost.x { border-radius: 0 999px 999px 0; padding: 0.5em 0.75em 0.5em 0.6em; }
+.remote-pill .ghost.x:hover { color: var(--bad); }
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--mute-2); display: inline-block; margin-right: 2px; }
+.remote-pill.connected .live-dot, .r-conn .live-dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+.remote-pill.connected .ghost:first-child { color: var(--ink); }
+/* remote dialog title */
+.r-title { font-size: 20px; margin: 0 0 18px; }
+.r-qr.off { background: var(--surface-2); color: var(--mute); }
+.r-qr.off .ic { width: 56px; height: 56px; }
+.r-lead { font-size: 14px; line-height: 1.5; margin: 8px 0 4px; }
+.r-conn { display: inline-flex; align-items: center; gap: 6px; }
+.r-actions .big { font-size: 16px; padding: 0.65em 1.4em; white-space: nowrap; }
+.r-actions .ghost { white-space: nowrap; }
+.r-qr + .r-note { margin-top: 16px; }
+.r-qr + .r-conn { margin-top: 16px; }
+
+/* header remote pill: one shape, two equal-height halves */
+.remote-pill { display: inline-flex; align-items: stretch; gap: 0; border-radius: 999px; background: var(--chip); overflow: hidden; }
+.remote-pill .ghost, .remote-pill .ghost:first-child, .remote-pill .ghost.x { background: transparent; border-radius: 0; margin: 0; }
+.remote-pill .ghost:first-child { padding: 0.5em 0.9em 0.5em 1em; }
+.remote-pill .ghost.x { padding: 0 0.85em; border-left: 1px solid var(--line); display: inline-flex; align-items: center; }
+.remote-pill .ghost:hover { background: var(--chip-hover); }
+/* remote dialog: round close button floating above the card */
+dialog.remote-dlg { overflow: visible; margin-top: max(84px, calc(50vh - 300px)); }
+.r-close {
+  position: absolute; top: -64px; left: 50%; transform: translateX(-50%);
+  width: 44px; height: 44px; border-radius: 50%; border: 0; display: grid; place-items: center;
+  background: var(--surface); color: var(--ink); box-shadow: 0 0 0 1px var(--line), 0 8px 24px rgba(0, 0, 0, 0.4);
+}
+.r-close:hover { background: var(--surface-2); }
+.r-close .ic { width: 18px; height: 18px; }
+
+/* header remote button: green when a phone is connected; hover shows what a click does */
+.remote-btn.connected { background: color-mix(in srgb, var(--good) 18%, var(--bg)); color: color-mix(in srgb, var(--good) 70%, #fff); }
+.remote-btn .rb-hover { display: none; }
+.remote-btn.connected:hover { background: color-mix(in srgb, var(--bad) 18%, var(--bg)); color: color-mix(in srgb, var(--bad) 70%, #fff); }
+.remote-btn.connected:hover .live-dot { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent); }
+.remote-btn.connected:hover .rb-text { display: none; }
+.remote-btn.connected:hover .rb-hover { display: inline; }
+.remote-btn { white-space: nowrap; }
+.remote-btn.connected .live-dot { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 25%, transparent); }
+.remote-btn.connected:hover .live-dot { background: var(--bad); box-shadow: 0 0 0 3px color-mix(in srgb, var(--bad) 25%, transparent); }
+.top-actions { align-items: center; }
+.remote-btn.connected .rb-text { color: color-mix(in srgb, var(--good) 70%, #fff); }
+.remote-btn.connected:hover .rb-hover { color: color-mix(in srgb, var(--bad) 70%, #fff); }
+.ghost.remote-btn { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; }
+.remote-btn .live-dot { margin: 0; }
+
+.remote.center-r .ghost { margin-top: 4px; }
+
+/* footer icon buttons: true circles, all the same size */
+.keys .ghost.icon { width: 34px; height: 34px; padding: 0; justify-content: center; border-radius: 50%; flex-shrink: 0; }
+.keys .ghost.icon .ic { width: 16px; height: 16px; }
+.keys .ghost.sm:not(.icon) { height: 34px; padding-top: 0; padding-bottom: 0; }
+
+/* remote dialog actions: full-width pills, like the phone remote */
+.remote-dlg .r-actions { flex-direction: column; align-items: stretch; margin-top: 18px; }
+.remote-dlg .r-actions .big { width: 100%; min-height: 52px; font-size: 16px; }
+
+/* key hints inside the footer buttons */
+.keys .ghost kbd { margin: 0 0 0 4px; padding: 0.15em 0.4em; font-size: 0.78em; background: transparent; border-color: var(--line-2); color: var(--mute); }
+.keys .ghost kbd:first-child { margin: 0 4px 0 0; }
+
+/* footer: text buttons with a grey key cap in front (Pause / Skip / Undo) */
+.txt-btn { display: inline-flex; align-items: center; gap: 8px; height: 34px; padding: 0 10px; border: 0; border-radius: 999px;
+  background: transparent; color: var(--ink-2); font-size: 13px; font-weight: 500; }
+.txt-btn:hover { color: var(--ink); background: var(--chip); }
+.txt-btn kbd, .keys .txt-btn kbd { margin: 0; min-width: 22px; height: 22px; padding: 0 6px; display: inline-grid; place-items: center;
+  border: 0; border-radius: 6px; background: var(--surface-2); color: var(--ink-2); font-size: 11px; }
+.keys .ghost.sm[data-act="menu"] { gap: 6px; padding: 0 14px 0 12px; }
+
+/* Pause & Skip: low emphasis until hovered */
+.txt-btn[data-act="pause"], .txt-btn[data-act="skip"] { opacity: 0.5; transition: opacity 0.15s, background 0.15s, color 0.15s; }
+.txt-btn[data-act="pause"]:hover, .txt-btn[data-act="skip"]:hover, .txt-btn[data-act="pause"]:focus-visible, .txt-btn[data-act="skip"]:focus-visible { opacity: 1; }
+.txt-btn[data-act="undo"] { opacity: 0.5; transition: opacity 0.15s, background 0.15s, color 0.15s; }
+.txt-btn[data-act="undo"]:hover, .txt-btn[data-act="undo"]:focus-visible { opacity: 1; }
+
+/* vertical divider between the key-help text buttons and the round icon buttons */
+.keys .txt-btn + .ghost.icon { position: relative; margin-left: 17px; overflow: visible; }
+.keys .txt-btn + .ghost.icon::before { content: ""; position: absolute; left: -13px; top: 50%; width: 1px; height: 20px; transform: translateY(-50%); background: var(--line-2); }
+
+/* key-help group: tighter, and equal space either side of the divider (12px | 12px) */
+.keys .txt-btn { padding: 0 4px; }
+.keys .txt-btn + .txt-btn { margin-left: -2px; }
+.keys .txt-btn + .ghost.icon { margin-left: 13px; }
+.keys .txt-btn + .ghost.icon::before { left: -13px; }
+/* 16px either side of the divider */
+.keys .txt-btn + .ghost.icon { margin-left: 21px; }
+.keys .txt-btn + .ghost.icon::before { left: -17px; }
