@@ -1,0 +1,10 @@
+{
+  "name": "face-relay",
+  "version": "1.0.0",
+  "private": true,
+  "description": "3-second 'name the famous face' party game for the TV",
+  "scripts": {
+    "start": "python3 scripts/serve.py 4173",
+    "verify-decks": "node scripts/verify-decks.mjs"
+  }
+}
