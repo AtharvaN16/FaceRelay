@@ -49,7 +49,7 @@
     rounds: 20,   // shout-out: number of faces
     famousOnly: false,   // only the best-known people in each deck
     negScoring: false,   // a wrong answer costs a point and play carries on
-    repeatFaces: false,  // off: faces from the last game are kept for the end of the new game's deck
+    noRepeats: true,     // faces already shown in earlier games wait until the rest of the decks have been played
     skips: -1,           // skips per turn (relay) / per game (shout); -1 = unlimited
     muted: false,
     tvMode: false,  // higher-contrast look for TVs
@@ -59,8 +59,8 @@
     try { return { ...defaults, ...JSON.parse(localStorage.getItem(STORE_KEY) || "{}") }; } catch { return { ...defaults }; }
   }
   function saveSettings() {
-    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames } = S;
-    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, repeatFaces, teamNames })); } catch {}
+    const { mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, noRepeats, teamNames } = S;
+    try { localStorage.setItem(STORE_KEY, JSON.stringify({ mode, teamCount, teamSizes, teamColors, decks, seconds, laps, turns, chances, rounds, muted, tvMode, famousOnly, negScoring, skips, noRepeats, teamNames })); } catch {}
   }
 
   // ---------- sound ----------
@@ -231,11 +231,13 @@
   }
   const playerLabel = (i) => `Player ${i + 1}`;
 
-  // Faces shown in the current game, so the next game can leave them out ("Repeat faces" off)
-  const LAST_GAME_KEY = "face-relay:last-game:v1";
-  const lastGameFaces = () => { try { return new Set(JSON.parse(localStorage.getItem(LAST_GAME_KEY) || "[]")); } catch { return new Set(); } };
+  // Every face shown on this device, across games ("No repeats" deals unseen faces first)
+  const SEEN_KEY = "face-relay:seen:v2";
+  const seenFaces = () => { try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || "[]")); } catch { return new Set(); } };
+  const saveSeen = (set) => { try { localStorage.setItem(SEEN_KEY, JSON.stringify([...set].slice(-2000))); } catch {} };
+  try { localStorage.removeItem("face-relay:last-game:v1"); } catch {}   // older one-game-back list
   function rememberFace(key) {
-    try { const a = [...lastGameFaces()]; if (!a.includes(key)) { a.push(key); localStorage.setItem(LAST_GAME_KEY, JSON.stringify(a)); } } catch {}
+    const seen = seenFaces(); if (!seen.has(key)) { seen.add(key); saveSeen(seen); }
   }
 
   function nextCard() {
@@ -262,11 +264,15 @@
       }
       if (!cards.length) throw new Error("Pick at least one deck.");
 
-      // Fresh random order every game. With "Repeat faces" off, last game's faces go to the very end
-      // (only reached if the deck runs out), each part shuffled on its own.
-      const last = S.repeatFaces ? new Set() : lastGameFaces();
-      cards = shuffle(cards.filter((c) => !last.has(c.key))).concat(shuffle(cards.filter((c) => last.has(c.key))));
-      try { localStorage.removeItem(LAST_GAME_KEY); } catch {}   // this game starts its own list
+      // Fresh random order every game. "No repeats": faces seen in earlier games go to the end (only reached
+      // if the deck runs out). Once fewer than a third of these decks are unseen, they all start fresh again,
+      // so a game never ends up made only of the leftovers.
+      if (S.noRepeats) {
+        const seen = seenFaces();
+        const unseen = cards.filter((c) => !seen.has(c.key));
+        if (unseen.length < Math.max(12, cards.length / 3)) { cards.forEach((c) => seen.delete(c.key)); saveSeen(seen); cards = shuffle(cards); }
+        else cards = shuffle(unseen).concat(shuffle(cards.filter((c) => seen.has(c.key))));
+      } else cards = shuffle(cards);
       // Preload the first batch before starting, the rest in the background.
       const first = Math.min(cards.length, 12);
       let done = 0;
@@ -300,7 +306,7 @@
   const pointsLabel = (n) => `${n < 0 ? "−" + Math.abs(n) : n} point${Math.abs(n) === 1 ? "" : "s"}`;
   function newTurn(relayOnly = false) {
     if (relayOnly && S.mode !== "relay") return;
-    S.turnMisses = 0; S.turnAdj = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
+    S.turnMisses = 0; S.turnAdj = 0; S.turnSkips = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
     // Where this team stood when the turn began, so "Restart chain" can put it back
     S.turnStart = { score: S.scores?.[S.team] ?? 0, clears: S.clears?.[S.team] ?? 0 };
   }
@@ -311,7 +317,7 @@
   function snapshot() {
     S.undoStack = [{
       scores: S.scores.slice(), clears: S.clears.slice(), team: S.team, turnNo: S.turnNo, link: S.link,
-      run: S.run, misses: S.misses, round: S.round, turnMisses: S.turnMisses, turnAdj: S.turnAdj || 0, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
+      run: S.run, misses: S.misses, round: S.round, turnMisses: S.turnMisses, turnAdj: S.turnAdj || 0, turnSkips: S.turnSkips || 0, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
     }];
   }
   function undo() {
@@ -321,7 +327,7 @@
     clearTimeout(autoTimer);
     document.getElementById("confetti").innerHTML = "";
     Object.assign(S, { scores: u.scores, clears: u.clears, team: u.team, turnNo: u.turnNo, link: u.link,
-      run: u.run, misses: u.misses, round: u.round, turnMisses: u.turnMisses, turnAdj: u.turnAdj || 0, marks: u.marks, skipsLeft: u.skipsLeft });
+      run: u.run, misses: u.misses, round: u.round, turnMisses: u.turnMisses, turnAdj: u.turnAdj || 0, turnSkips: u.turnSkips || 0, marks: u.marks, skipsLeft: u.skipsLeft });
     S.result = null; S.awarded = null; S.cleared = false; S.paused = false; S.revealed = false; S.skipping = false;
     nextCard();
     S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
@@ -348,6 +354,14 @@
   }
   function finishSkip() {
     S.skipping = false;
+    // Relay: a skip is a pass. The chain moves to the next player (no point, no penalty, no extra face),
+    // and a turn with a skip can't earn the chain bonus.
+    if (S.mode === "relay") {
+      S.marks[S.link] = "skip"; S.turnSkips = (S.turnSkips || 0) + 1;
+      S.result = null; S.misses = 0;
+      if (S.link >= chainOrder().length - 1) { S.cleared = false; S.screen = "turnEnd"; return render(); }
+      S.link++; return go();
+    }
     nextCard();
     S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
     sfx.go(); render();
@@ -410,7 +424,7 @@
       // Missed, but this player still has chances left: same player, new face
       if (S.result !== "correct" && S.misses < S.chances) { S.result = null; return go(); }
       // Turn over: either the whole chain cleared or someone missed
-      S.cleared = S.result === "correct" && !(S.negScoring && S.turnMisses);
+      S.cleared = S.result === "correct" && !(S.negScoring && S.turnMisses) && !S.turnSkips;
       if (S.cleared) { S.scores[S.team] += CHAIN_BONUS; S.clears[S.team]++; sfx.win(); confetti(); }
       S.screen = "turnEnd"; return render();
     }
@@ -466,7 +480,7 @@
       [["]"], "Right answer"],
       [["["], "Wrong answer"],
       [["P"], "Pause / resume"],
-      [["S"], "Skip face"],
+      [["S"], "Skip (Relay: pass to the next player; Shout-Out: new face)"],
       [["U"], "Undo the last call: new face, no penalty"],
       [["1", "–", "6"], "Shout-Out: award a team"],
       [["⇧", "1", "–", "6"], "Shout-Out: −1 to a team (negative scoring)"],
@@ -570,7 +584,7 @@
   // ---------- save / resume (localStorage on this device) ----------
   const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
     "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi",
-    "negScoring", "skips", "turnMisses", "marks", "skipsLeft", "turnStart", "teamNames", "turnAdj"];
+    "negScoring", "skips", "turnMisses", "marks", "skipsLeft", "turnStart", "teamNames", "turnAdj", "turnSkips"];
   function saveGame() {
     if (!["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
     const g = { savedAt: Date.now() };
@@ -759,7 +773,7 @@
             <div><h3>${relay ? "Skips per turn" : "Skips"}</h3>${segs("skips", [0, 1, 2, -1], S.skips, (v) => (v < 0 ? "Unlimited" : v))}</div>
             <div class="toggles">
               <label class="tg"><button type="button" class="switch ${S.negScoring ? "on" : ""}" role="switch" aria-checked="${S.negScoring}" data-act="neg" title="A wrong answer costs a point and play carries on"><i></i></button>Negative scoring</label>
-              <label class="tg"><button type="button" class="switch ${S.repeatFaces ? "on" : ""}" role="switch" aria-checked="${!!S.repeatFaces}" data-act="repeat" title="Off: faces from the last game don't come up again until the deck runs out"><i></i></button>Repeat faces from last game</label>
+              <label class="tg"><button type="button" class="switch ${S.noRepeats ? "on" : ""}" role="switch" aria-checked="${!!S.noRepeats}" data-act="repeat" title="Faces from earlier games don't come up again until the rest of the decks have been played"><i></i></button>No repeats</label>
             </div>
           </div>
         </section>
@@ -794,7 +808,7 @@
     return `<div class="chain" style="--c:${teamColor(S.team)}">${order.map((pi, i) => {
       const out = S.result && S.result !== "correct" && S.misses >= S.chances;
       const negMiss = S.negScoring && i === S.link && S.result && S.result !== "correct";
-      const state = i < S.link ? (S.marks?.[i] === "miss" ? "fail" : "done")
+      const state = i < S.link ? (S.marks?.[i] === "miss" ? "fail" : S.marks?.[i] === "skip" ? "skipped" : "done")
         : i === S.link && S.result === "correct" ? "done"
         : i === S.link ? ((out || negMiss) && S.screen !== "ready" ? "fail" : "now") : "";
       const pips = S.chances > 1 && i === S.link && state !== "done"
@@ -993,7 +1007,7 @@
       case "tv": S.tvMode = !S.tvMode; saveSettings(); return render();
       case "keys": return openShortcuts();
       case "neg": S.negScoring = !S.negScoring; saveSettings(); return render();
-      case "repeat": S.repeatFaces = !S.repeatFaces; saveSettings(); return render();
+      case "repeat": S.noRepeats = !S.noRepeats; saveSettings(); return render();
       case "restart": return restartMenu();
       case "pause": return togglePause();
       case "skip": return skip();
@@ -1130,7 +1144,7 @@
       case "deck": chooseDeck(v); break;
       case "secs": if ([2, 3, 5, 8].includes(n)) S.seconds = n; break;
       case "neg": S.negScoring = v === "on"; break;
-      case "repeat": S.repeatFaces = v === "on"; break;
+      case "repeat": S.noRepeats = v === "on"; break;
       case "skips": if ([0, 1, 2, -1].includes(n)) S.skips = n; break;
       case "turns": if ([1, 2, 3, 5].includes(n)) S.turns = n; break;
       case "chances": if ([1, 2, 3].includes(n)) S.chances = n; break;
@@ -1230,7 +1244,7 @@
       screen: S.screen, mode: S.mode,
       answer: S.card && ["show", "result"].includes(S.screen) ? { name: S.card.name, desc: S.card.desc, img: S.card.img } : null,
       upcoming: S.screen === "ready" && S.queue.length ? (() => { const c = S.queue[S.qi % S.queue.length]; return { name: c.name, desc: c.desc, img: c.img }; })() : null,
-      team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null, teamIdx: S.team,
+      team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null, teamIdx: S.team, awarded: S.awarded,
       player: cur ? `P${(chainOrder()[S.link] ?? 0) + 1}` : null,
       chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
       round: !relay && S.screen !== "setup" ? `Round ${Math.max(S.round, 1)}/${S.rounds}` : null,
@@ -1253,7 +1267,7 @@
         teams: Array.from({ length: S.teamCount }, (_, t) => ({ name: teamName(t), color: teamColor(t), size: S.teamSizes[t] })),
         decks: [{ k: "famous", label: "Famous only", n: famousCount(), on: !!S.famousOnly }]
           .concat(Object.entries(window.DECKS).map(([k, d]) => ({ k, label: d.label, n: d.people.length, on: !S.famousOnly && S.decks.includes(k) }))),
-        famous: S.famousOnly ? "famous" : "all", neg: !!S.negScoring, repeat: !!S.repeatFaces, skips: S.skips,
+        famous: S.famousOnly ? "famous" : "all", neg: !!S.negScoring, repeat: !!S.noRepeats, skips: S.skips,
       } : null,
       left: S.screen === "show" ? timeLeft() : 0,
     };
@@ -1265,22 +1279,21 @@
   function remoteView() {
     document.title = "Face Relay remote";
     document.body.classList.add("hostview");
-    let st = null, conn = "connecting", send = () => {}, retryTimer = null, wake = null, turnedOff = false, adjOpen = false;
+    let st = null, conn = "connecting", send = () => {}, retryTimer = null, wake = null, turnedOff = false
 
     // Only the controls that make sense right now (layout from the Figma "Remote" screens)
     const controls = () => {
       const relay = st.mode === "relay";
       const B = (cmd, label, cls = "", arg) => `<button class="big ${cls}" data-h="${cmd}" ${arg !== undefined ? `data-arg="${arg}"` : ""}>${label}</button>`;
       const G = (cmd, label, cls = "") => `<button class="ghost ${cls}" data-h="${cmd}">${label}</button>`;
-      // Result screen: Undo + "± Score" (opens −1 / +1 for the team that played, or every team in Shout-Out)
-      const adjRows = (relay ? [st.teamIdx] : st.teams.map((_, i) => i)).filter((i) => st.teams[i]).map((i) => {
-        const t = st.teams[i];
-        return `<div class="r-adj-row"><span class="r-adj-name"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</span><b class="r-adj-score">${t.score}</b>
-          <button class="ghost r-adj-btn" data-h="adjust" data-t="${i}" data-d="-1" aria-label="${esc(t.name)} minus one point">−1</button>
-          <button class="ghost r-adj-btn plus" data-h="adjust" data-t="${i}" data-d="1" aria-label="${esc(t.name)} plus one point">+1</button></div>`;
-      }).join("");
-      const resultTools = `<div class="r-pair ${st.canUndo ? "" : "one"}">${st.canUndo ? G("undo", `${IC.undo} Undo`, "wide") : ""}<button class="ghost wide ${adjOpen ? "on" : ""}" data-r="adj" aria-expanded="${adjOpen}">± Score</button></div>
-        ${adjOpen ? `<div class="r-adj">${adjRows}</div>` : ""}`;
+      // Result screen: −1  Undo  +1 for the team that just played (Shout-Out: the team that got the point)
+      const fixT = relay ? st.teamIdx : st.awarded;
+      const fix = st.teams[fixT];
+      const resultTools = fix ? `<div class="r-fix">
+          <button class="ghost r-fix-btn" data-h="adjust" data-t="${fixT}" data-d="-1" aria-label="${esc(fix.name)} minus one point">−1</button>
+          ${st.canUndo ? G("undo", `${IC.undo} Undo`, "wide") : `<span class="r-fix-score"><i class="dot" style="--c:${fix.color}"></i>${fix.score}</span>`}
+          <button class="ghost r-fix-btn plus" data-h="adjust" data-t="${fixT}" data-d="1" aria-label="${esc(fix.name)} plus one point">+1</button></div>`
+        : st.canUndo ? `<div class="r-undo">${G("undo", `${IC.undo} Undo`)}</div>` : "";
       const canSkip = st.skipsLeft === null || st.skipsLeft > 0;
       const skipPause = `<div class="r-pair ${canSkip ? "" : "one"}">${canSkip ? G("skip", `${IC.skip} Skip${st.skipsLeft !== null ? ` · ${st.skipsLeft}` : ""}`, "wide") : ""}${G("pause", `${IC.pause} Pause`, "wide")}</div>`;
       switch (st.screen) {
@@ -1322,7 +1335,7 @@
           : row("Rounds", tabs("rounds", [10, 20, 30, 50].map((n) => [n, n]), cfg.rounds))}
         ${row(relay ? "Skips per turn" : "Skips", tabs("skips", [[0, 0], [1, 1], [2, 2], [-1, "∞"]], cfg.skips))}
         ${row("Negative scoring", `<button type="button" class="switch ${cfg.neg ? "on" : ""}" role="switch" aria-checked="${cfg.neg}" aria-label="Negative scoring" data-h="set" data-k="neg" data-v="${cfg.neg ? "off" : "on"}"><i></i></button>`)}
-        ${row("Repeat faces from last game", `<button type="button" class="switch ${cfg.repeat ? "on" : ""}" role="switch" aria-checked="${cfg.repeat}" aria-label="Repeat faces from last game" data-h="set" data-k="repeat" data-v="${cfg.repeat ? "off" : "on"}"><i></i></button>`)}
+        ${row("No repeats", `<button type="button" class="switch ${cfg.repeat ? "on" : ""}" role="switch" aria-checked="${cfg.repeat}" aria-label="No repeats" data-h="set" data-k="repeat" data-v="${cfg.repeat ? "off" : "on"}"><i></i></button>`)}
       </section>`;
     };
 
@@ -1366,7 +1379,6 @@
 
     const onState = (m) => {
       if (m?.type !== "state") return;
-      if (st && st.screen !== m.screen) adjOpen = false;   // the score fixer closes when the game moves on
       st = m; st.localDeadline = st.screen === "show" && !st.paused ? Date.now() + st.left * 1000 : 0;
       paint();
     };
@@ -1391,7 +1403,6 @@
     document.addEventListener("click", (e) => {
       if (!wake && navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => (wake = w)).catch(() => {});   // keep the phone awake
       if (e.target.closest('[data-r="retry"]')) { turnedOff = false; conn = "connecting"; paint(); return connectPhone(); }
-      if (e.target.closest('[data-r="adj"]')) { adjOpen = !adjOpen; return paint(); }
       const b = e.target.closest("[data-h]"); if (!b) return;
       if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
       if (b.dataset.h === "set") return send("set", { k: b.dataset.k, v: b.dataset.v });

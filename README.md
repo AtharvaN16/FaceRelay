@@ -38,7 +38,7 @@ Other devices on the same Wi-Fi can open `http://<your-laptop-ip>:4173`.
 | `]` / `[` | Right / wrong |
 | `1`–`6` / `0` | Award a team / nobody (Shout-Out) |
 | `P` | Pause (hides the face, freezes the clock) |
-| `S` | Skip face (new face, no penalty) |
+| `S` | Skip. Relay: the turn passes to the next player (no point, no penalty, but no chain bonus). Shout-Out: a new face |
 | `U` | Undo the last call: the score goes back and the same player gets a new face (no penalty) |
 | `T` | TV mode (higher contrast) |
 | `R` | Restart |
