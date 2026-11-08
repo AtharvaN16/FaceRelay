@@ -923,8 +923,12 @@
           : `<span style="color:${teamColor(ranked[0].t)}">${teamName(ranked[0].t)}</span> wins`;
         const all = standings();
         // Podium for 1 team or 3+ with a single winner. 2 teams (lopsided), a tie for 1st, or nobody scoring: the table
-        const usePod = ranked[0].s > 0 && S.teamCount !== 2 && leaders.length === 1;
-        const board = usePod ? podiumTop(all.slice(0, 3), all.length > 3) + (all.length > 3 ? podium(all.slice(3)) : "") : podium(all);
+        // One clear winner: the celebration ring. 3+ teams: 2nd · 1st · 3rd on rings, the rest in the table.
+        // 2 teams: just the winner's ring, then both teams in the table. A tie for 1st or nobody scoring: the table only.
+        const usePod = ranked[0].s > 0 && leaders.length === 1;
+        const board = !usePod ? podium(all)
+          : S.teamCount === 2 ? podiumTop(all.slice(0, 1), true) + podium(all)
+          : podiumTop(all.slice(0, 3), all.length > 3) + (all.length > 3 ? podium(all.slice(3)) : "");
         stage = `<div class="end win ${usePod ? "has-pod" : ""}"><h2>${headline}</h2>
           ${board}
           <button class="big go" data-act="primary" type="button">Menu</button></div>`;
