@@ -300,7 +300,7 @@
   const pointsLabel = (n) => `${n < 0 ? "−" + Math.abs(n) : n} point${Math.abs(n) === 1 ? "" : "s"}`;
   function newTurn(relayOnly = false) {
     if (relayOnly && S.mode !== "relay") return;
-    S.turnMisses = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
+    S.turnMisses = 0; S.turnAdj = 0; S.marks = []; S.skipsLeft = S.skips < 0 ? Infinity : S.skips;
     // Where this team stood when the turn began, so "Restart chain" can put it back
     S.turnStart = { score: S.scores?.[S.team] ?? 0, clears: S.clears?.[S.team] ?? 0 };
   }
@@ -311,7 +311,7 @@
   function snapshot() {
     S.undoStack = [{
       scores: S.scores.slice(), clears: S.clears.slice(), team: S.team, turnNo: S.turnNo, link: S.link,
-      run: S.run, misses: S.misses, round: S.round, turnMisses: S.turnMisses, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
+      run: S.run, misses: S.misses, round: S.round, turnMisses: S.turnMisses, turnAdj: S.turnAdj || 0, marks: (S.marks || []).slice(), skipsLeft: S.skipsLeft,
     }];
   }
   function undo() {
@@ -321,7 +321,7 @@
     clearTimeout(autoTimer);
     document.getElementById("confetti").innerHTML = "";
     Object.assign(S, { scores: u.scores, clears: u.clears, team: u.team, turnNo: u.turnNo, link: u.link,
-      run: u.run, misses: u.misses, round: u.round, turnMisses: u.turnMisses, marks: u.marks, skipsLeft: u.skipsLeft });
+      run: u.run, misses: u.misses, round: u.round, turnMisses: u.turnMisses, turnAdj: u.turnAdj || 0, marks: u.marks, skipsLeft: u.skipsLeft });
     S.result = null; S.awarded = null; S.cleared = false; S.paused = false; S.revealed = false; S.skipping = false;
     nextCard();
     S.deadline = performance.now() + S.seconds * 1000; S.lastTick = -1;
@@ -548,7 +548,7 @@
     const t = S.turnStart;
     if (t) { S.scores[S.team] = t.score; S.clears[S.team] = t.clears; }
     else {   // older save without turnStart: take back what this turn added
-      S.scores[S.team] -= S.run - (S.negScoring ? S.turnMisses || 0 : 0) + (S.cleared ? CHAIN_BONUS : 0);
+      S.scores[S.team] -= S.run - (S.negScoring ? S.turnMisses || 0 : 0) + (S.turnAdj || 0) + (S.cleared ? CHAIN_BONUS : 0);
       if (S.cleared) S.clears[S.team]--;
     }
     S.link = 0; S.run = 0; S.misses = 0; S.result = null; S.cleared = false; newTurn();
@@ -570,7 +570,7 @@
   // ---------- save / resume (localStorage on this device) ----------
   const GAME_FIELDS = ["mode", "teamCount", "teamSizes", "teamColors", "seconds", "laps", "turns", "chances", "rounds",
     "scores", "clears", "team", "turnNo", "link", "run", "misses", "result", "cleared", "round", "awarded", "screen", "card", "qi",
-    "negScoring", "skips", "turnMisses", "marks", "skipsLeft", "turnStart", "teamNames"];
+    "negScoring", "skips", "turnMisses", "marks", "skipsLeft", "turnStart", "teamNames", "turnAdj"];
   function saveGame() {
     if (!["ready", "show", "result", "turnEnd"].includes(S.screen)) return;
     const g = { savedAt: Date.now() };
@@ -895,7 +895,7 @@
         const lastTurn = S.team === S.teamCount - 1 && S.turnNo >= S.turns;
         const nextTeam = (S.team + 1) % S.teamCount;
         stage = `<div class="ready turnend" style="--c:${tc}">
-          <h2 class="who">${S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0))}</h2>
+          <h2 class="who">${S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0) + (S.turnAdj || 0))}</h2>
           ${!lastTurn && S.teamCount > 1 ? `<p class="sub next">Next: <b style="color:${teamColor(nextTeam)}">${teamName(nextTeam)}</b></p>` : ""}</div>`;
         break;
       }
@@ -1141,12 +1141,20 @@
     saveSettings(); render();
   }
 
+  // Host fixes a mistake by hand: +1 / −1 to a team, on the result screen (from the phone)
+  function adjustScore(t, d) {
+    if (S.screen !== "result" || !(t >= 0 && t < S.teamCount) || (d !== 1 && d !== -1)) return;
+    S.scores[t] += d;
+    if (S.mode === "relay" && t === S.team) S.turnAdj = (S.turnAdj || 0) + d;   // counts toward this turn's points
+    render();
+  }
+
   function handleRemote(m) {
     if (!m || typeof m !== "object") return;
     if (m.type === "hello") return broadcast();
     if (m.type !== "cmd") return;
     ({ primary, correct: () => judge(true), wrong: () => judge(false), award: () => award(m.arg),
-       pause: togglePause, skip, undo, penalize: () => penalize(m.arg),
+       pause: togglePause, skip, undo, penalize: () => penalize(m.arg), adjust: () => adjustScore(m.arg?.t, m.arg?.d),
        set: () => applySetting(m.arg?.k, m.arg?.v),
        restartNow: () => restart(true),
        menuNow: () => { if (S.screen !== "setup" && S.screen !== "loading") toMenu(); },
@@ -1222,14 +1230,14 @@
       screen: S.screen, mode: S.mode,
       answer: S.card && ["show", "result"].includes(S.screen) ? { name: S.card.name, desc: S.card.desc, img: S.card.img } : null,
       upcoming: S.screen === "ready" && S.queue.length ? (() => { const c = S.queue[S.qi % S.queue.length]; return { name: c.name, desc: c.desc, img: c.img }; })() : null,
-      team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null,
+      team: cur ? { name: teamName(S.team), color: teamColor(S.team) } : null, teamIdx: S.team,
       player: cur ? `P${(chainOrder()[S.link] ?? 0) + 1}` : null,
       chance: cur && S.chances > 1 ? `${Math.min(S.misses + 1, S.chances)}/${S.chances}` : null,
       round: !relay && S.screen !== "setup" ? `Round ${Math.max(S.round, 1)}/${S.rounds}` : null,
       teams: S.scores.map((s, t) => ({ name: teamName(t), color: teamColor(t), score: s })),
       turnEnd: S.screen === "turnEnd" ? (() => {
         const nt = (S.team + 1) % S.teamCount, last = S.team === S.teamCount - 1 && S.turnNo >= S.turns;
-        return { headline: S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0)), color: teamColor(S.team),
+        return { headline: S.cleared ? "Chain cleared" : pointsLabel(S.run - (S.negScoring ? S.turnMisses : 0) + (S.turnAdj || 0)), color: teamColor(S.team),
           next: !last && S.teamCount > 1 ? { name: teamName(nt), color: teamColor(nt) } : null, last };
       })() : null,
       final: S.screen === "final" ? (() => {
@@ -1257,14 +1265,22 @@
   function remoteView() {
     document.title = "Face Relay remote";
     document.body.classList.add("hostview");
-    let st = null, conn = "connecting", send = () => {}, retryTimer = null, wake = null, turnedOff = false;
+    let st = null, conn = "connecting", send = () => {}, retryTimer = null, wake = null, turnedOff = false, adjOpen = false;
 
     // Only the controls that make sense right now (layout from the Figma "Remote" screens)
     const controls = () => {
       const relay = st.mode === "relay";
       const B = (cmd, label, cls = "", arg) => `<button class="big ${cls}" data-h="${cmd}" ${arg !== undefined ? `data-arg="${arg}"` : ""}>${label}</button>`;
       const G = (cmd, label, cls = "") => `<button class="ghost ${cls}" data-h="${cmd}">${label}</button>`;
-      const undo = st.canUndo ? `<div class="r-undo">${G("undo", `${IC.undo} Undo`)}</div>` : "";
+      // Result screen: Undo + "± Score" (opens −1 / +1 for the team that played, or every team in Shout-Out)
+      const adjRows = (relay ? [st.teamIdx] : st.teams.map((_, i) => i)).filter((i) => st.teams[i]).map((i) => {
+        const t = st.teams[i];
+        return `<div class="r-adj-row"><span class="r-adj-name"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</span><b class="r-adj-score">${t.score}</b>
+          <button class="ghost r-adj-btn" data-h="adjust" data-t="${i}" data-d="-1" aria-label="${esc(t.name)} minus one point">−1</button>
+          <button class="ghost r-adj-btn plus" data-h="adjust" data-t="${i}" data-d="1" aria-label="${esc(t.name)} plus one point">+1</button></div>`;
+      }).join("");
+      const resultTools = `<div class="r-pair ${st.canUndo ? "" : "one"}">${st.canUndo ? G("undo", `${IC.undo} Undo`, "wide") : ""}<button class="ghost wide ${adjOpen ? "on" : ""}" data-r="adj" aria-expanded="${adjOpen}">± Score</button></div>
+        ${adjOpen ? `<div class="r-adj">${adjRows}</div>` : ""}`;
       const canSkip = st.skipsLeft === null || st.skipsLeft > 0;
       const skipPause = `<div class="r-pair ${canSkip ? "" : "one"}">${canSkip ? G("skip", `${IC.skip} Skip${st.skipsLeft !== null ? ` · ${st.skipsLeft}` : ""}`, "wide") : ""}${G("pause", `${IC.pause} Pause`, "wide")}</div>`;
       switch (st.screen) {
@@ -1277,7 +1293,7 @@
               : `<div class="r-grid">${st.teams.map((t, i) => `<button class="big neutral" data-h="award" data-arg="${i}"><i class="dot" style="--c:${t.color}"></i>${esc(t.name)}</button>`).join("")}${B("award", "Nobody", "neutral", -1)}</div>`) };
           // "Next" moves the game on (during a face it scores the answer). A wrong answer is ← / the timeout, or Undo to re-judge
           return { main: skipPause + B("primary", "Next") };
-        case "result": return { main: undo + B("primary", "Next") };
+        case "result": return { main: resultTools + B("primary", "Next") };
         case "turnEnd": return { main: B("primary", st.turnEnd?.last ? "See results" : "Next team") };
         case "final": return { main: B("primary", "Back to menu") };
         case "setup": return { main: B("start", "Start game", "start") };
@@ -1350,6 +1366,7 @@
 
     const onState = (m) => {
       if (m?.type !== "state") return;
+      if (st && st.screen !== m.screen) adjOpen = false;   // the score fixer closes when the game moves on
       st = m; st.localDeadline = st.screen === "show" && !st.paused ? Date.now() + st.left * 1000 : 0;
       paint();
     };
@@ -1374,9 +1391,11 @@
     document.addEventListener("click", (e) => {
       if (!wake && navigator.wakeLock) navigator.wakeLock.request("screen").then((w) => (wake = w)).catch(() => {});   // keep the phone awake
       if (e.target.closest('[data-r="retry"]')) { turnedOff = false; conn = "connecting"; paint(); return connectPhone(); }
+      if (e.target.closest('[data-r="adj"]')) { adjOpen = !adjOpen; return paint(); }
       const b = e.target.closest("[data-h]"); if (!b) return;
       if (b.dataset.confirm && !confirm(b.dataset.confirm)) return;
       if (b.dataset.h === "set") return send("set", { k: b.dataset.k, v: b.dataset.v });
+      if (b.dataset.h === "adjust") return send("adjust", { t: +b.dataset.t, d: +b.dataset.d });
       send(b.dataset.h, b.dataset.arg !== undefined ? +b.dataset.arg : undefined);
     });
     document.addEventListener("keydown", (e) => {
